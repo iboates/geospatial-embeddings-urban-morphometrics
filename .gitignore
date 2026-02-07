@@ -1,0 +1,9 @@
+.tool-versions
+*.osm.pbf
+*.parquet
+__pycache__
+.idea/
+.vscode/
+*.pyc
+venv/
+.venv/
