@@ -45,7 +45,65 @@ from .shape import (
     squareness_metrics,
 )
 from .street_relationship import nearest_street_distance_metrics, street_profile_metrics
-from .street_connectivity import compute_connectivity_metrics_by_name
+from .street_connectivity import (
+    GRAPH_METRICS,
+    MODES,
+    NODE_METRICS,
+    PROPORTION_KEYS,
+    compute_connectivity_metrics_by_name,
+)
+
+# Registry of building/street metrics: (name, function, arg_style)
+# arg_style: "buildings" = (buildings_gdf, cell_polygon)
+#             "streets"  = (buildings_gdf, highways_gdf, cell_polygon)
+_BUILDING_METRICS = [
+    ("courtyard_area", courtyard_area_metrics, "buildings"),
+    ("floor_area", floor_area_metrics, "buildings"),
+    ("longest_axis_length", longest_axis_length_metrics, "buildings"),
+    ("perimeter_wall", perimeter_wall_metrics, "buildings"),
+    ("volume", volume_metrics, "buildings"),
+    ("circular_compactness", circular_compactness_metrics, "buildings"),
+    ("square_compactness", square_compactness_metrics, "buildings"),
+    ("convexity", convexity_metrics, "buildings"),
+    ("courtyard_index", courtyard_index_metrics, "buildings"),
+    ("rectangularity", rectangularity_metrics, "buildings"),
+    ("shape_index", shape_index_metrics, "buildings"),
+    ("corners", corners_metrics, "buildings"),
+    ("squareness", squareness_metrics, "buildings"),
+    ("equivalent_rectangular_index", equivalent_rectangular_index_metrics, "buildings"),
+    ("elongation", elongation_metrics, "buildings"),
+    ("facade_ratio", facade_ratio_metrics, "buildings"),
+    ("fractal_dimension", fractal_dimension_metrics, "buildings"),
+    ("form_factor", form_factor_metrics, "buildings"),
+    ("compactness_weighted_axis", compactness_weighted_axis_metrics, "buildings"),
+    ("centroid_corner_distance", centroid_corner_distance_metrics, "buildings"),
+    ("orientation", orientation_metrics, "buildings"),
+    ("shared_walls", shared_walls_metrics, "buildings"),
+    ("alignment", alignment_metrics, "buildings"),
+    ("neighbor_distance", neighbor_distance_metrics, "buildings"),
+    ("mean_interbuilding_distance", mean_interbuilding_distance_metrics, "buildings"),
+    ("building_adjacency", building_adjacency_metrics, "buildings"),
+    ("neighbors", neighbors_metrics, "buildings"),
+    ("cell_alignment", cell_alignment_metrics, "buildings"),
+    ("street_alignment", street_alignment_metrics, "streets"),
+    ("courtyards", courtyards_metrics, "buildings"),
+    ("street_profile", street_profile_metrics, "streets"),
+    ("nearest_street_distance", nearest_street_distance_metrics, "streets"),
+]
+
+# All possible connectivity metric names (for matching selected_metrics)
+_CONNECTIVITY_METRIC_NAMES: list[str] = []
+for _m in NODE_METRICS:
+    for _mode in MODES:
+        _CONNECTIVITY_METRIC_NAMES.append(f"{_m}_{_mode}")
+for _m in GRAPH_METRICS:
+    for _mode in MODES:
+        _CONNECTIVITY_METRIC_NAMES.append(f"{_m}_{_mode}")
+for _k in PROPORTION_KEYS:
+    for _mode in MODES:
+        _CONNECTIVITY_METRIC_NAMES.append(f"proportion_{_k}_{_mode}")
+
+ALL_METRIC_NAMES: list[str] = [name for name, _, _ in _BUILDING_METRICS] + _CONNECTIVITY_METRIC_NAMES
 
 
 def _configure_logging(
@@ -64,17 +122,20 @@ def _run_metric(
     name: str,
     *args,
     merge: bool = True,
+    quiet: bool = False,
     **kwargs,
 ) -> gpd.GeoDataFrame:
     """Run a metric function and optionally merge results, with start/finish logging."""
-    logger.info("Computing metric: %s", name)
+    if not quiet:
+        logger.info("Computing metric: %s", name)
     t0 = time.perf_counter()
     try:
         result = fn(*args, **kwargs)
         elapsed = time.perf_counter() - t0
         if merge and cell_gdf is not None and not result.empty:
             _merge_columns(cell_gdf, result)
-        logger.info("Finished metric: %s (%.2fs)", name, elapsed)
+        if not quiet:
+            logger.info("Finished metric: %s (%.2fs)", name, elapsed)
         return result
     except Exception as e:
         elapsed = time.perf_counter() - t0
@@ -89,8 +150,10 @@ def compute_all_metrics(
     pedestrians_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
     return_dict: bool = False,
+    selected_metrics: set[str] | None = None,
+    quiet: bool = False,
 ) -> gpd.GeoDataFrame | dict[str, gpd.GeoDataFrame]:
-    """Compute all building morphology metrics.
+    """Compute building morphology and street connectivity metrics.
 
     Args:
         buildings_gdf: Buildings GeoDataFrame from OSM.
@@ -101,6 +164,9 @@ def compute_all_metrics(
         return_dict: If True, return a dict mapping metric names to individual
             GeoDataFrames (one row each). If False (default), return a single
             GeoDataFrame with all metrics merged.
+        selected_metrics: If provided, only compute metrics whose names are in this set.
+            If None, compute all metrics.
+        quiet: If True, suppress per-metric log messages.
 
     Returns:
         If return_dict=False: GeoDataFrame with one row, geometry=cell_polygon,
@@ -111,117 +177,57 @@ def compute_all_metrics(
 
     merge = not return_dict
     metrics_dict: dict[str, gpd.GeoDataFrame] = {}
+    cell_gdf: gpd.GeoDataFrame | None = None
 
-    # Dimension metrics (first establishes base with geometry in projected CRS)
-    logger.info("Computing metric: courtyard_area")
-    t0 = time.perf_counter()
-    cell_gdf = courtyard_area_metrics(buildings_gdf, cell_polygon)
-    logger.info("Finished metric: courtyard_area (%.2fs)", time.perf_counter() - t0)
-    if return_dict:
-        metrics_dict["courtyard_area"] = cell_gdf.copy()
+    for name, fn, arg_style in _BUILDING_METRICS:
+        if selected_metrics is not None and name not in selected_metrics:
+            continue
 
-    for fn, name in [
-        (floor_area_metrics, "floor_area"),
-        (longest_axis_length_metrics, "longest_axis_length"),
-        (perimeter_wall_metrics, "perimeter_wall"),
-        (volume_metrics, "volume"),
-    ]:
-        result = _run_metric(cell_gdf, fn, name, buildings_gdf, cell_polygon, merge=merge)
-        if return_dict:
-            metrics_dict[name] = result
+        if arg_style == "streets":
+            args = (buildings_gdf, highways_gdf, cell_polygon)
+        else:
+            args = (buildings_gdf, cell_polygon)
 
-    # Shape metrics
-    for fn, name in [
-        (circular_compactness_metrics, "circular_compactness"),
-        (square_compactness_metrics, "square_compactness"),
-        (convexity_metrics, "convexity"),
-        (courtyard_index_metrics, "courtyard_index"),
-        (rectangularity_metrics, "rectangularity"),
-        (shape_index_metrics, "shape_index"),
-        (corners_metrics, "corners"),
-        (squareness_metrics, "squareness"),
-        (equivalent_rectangular_index_metrics, "equivalent_rectangular_index"),
-        (elongation_metrics, "elongation"),
-        (facade_ratio_metrics, "facade_ratio"),
-        (fractal_dimension_metrics, "fractal_dimension"),
-        (form_factor_metrics, "form_factor"),
-        (compactness_weighted_axis_metrics, "compactness_weighted_axis"),
-        (centroid_corner_distance_metrics, "centroid_corner_distance"),
-    ]:
-        result = _run_metric(cell_gdf, fn, name, buildings_gdf, cell_polygon, merge=merge)
-        if return_dict:
-            metrics_dict[name] = result
+        if cell_gdf is None:
+            # First metric establishes the base GeoDataFrame
+            if not quiet:
+                logger.info("Computing metric: %s", name)
+            t0 = time.perf_counter()
+            cell_gdf = fn(*args)
+            if not quiet:
+                logger.info("Finished metric: %s (%.2fs)", name, time.perf_counter() - t0)
+            if return_dict:
+                metrics_dict[name] = cell_gdf.copy()
+        else:
+            result = _run_metric(cell_gdf, fn, name, *args, merge=merge, quiet=quiet)
+            if return_dict:
+                metrics_dict[name] = result
 
-    # Distribution metrics
-    for fn, name in [
-        (orientation_metrics, "orientation"),
-        (shared_walls_metrics, "shared_walls"),
-        (alignment_metrics, "alignment"),
-        (neighbor_distance_metrics, "neighbor_distance"),
-        (mean_interbuilding_distance_metrics, "mean_interbuilding_distance"),
-        (building_adjacency_metrics, "building_adjacency"),
-        (neighbors_metrics, "neighbors"),
-        (cell_alignment_metrics, "cell_alignment"),
-    ]:
-        result = _run_metric(cell_gdf, fn, name, buildings_gdf, cell_polygon, merge=merge)
-        if return_dict:
-            metrics_dict[name] = result
+    # Ensure we have a base cell_gdf even if all building metrics were skipped
+    if cell_gdf is None:
+        from ._utils import prepare_buildings
+        _, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
 
-    result = _run_metric(
-        cell_gdf,
-        street_alignment_metrics,
-        "street_alignment",
-        buildings_gdf,
-        highways_gdf,
-        cell_polygon,
-        merge=merge,
+    # Street connectivity metrics
+    any_connectivity = selected_metrics is None or any(
+        name in selected_metrics for name in _CONNECTIVITY_METRIC_NAMES
     )
-    if return_dict:
-        metrics_dict["street_alignment"] = result
-
-    # Intensity metrics
-    result = _run_metric(
-        cell_gdf, courtyards_metrics, "courtyards", buildings_gdf, cell_polygon, merge=merge
-    )
-    if return_dict:
-        metrics_dict["courtyards"] = result
-
-    # Building-street relationship metrics
-    result = _run_metric(
-        cell_gdf,
-        street_profile_metrics,
-        "street_profile",
-        buildings_gdf,
-        highways_gdf,
-        cell_polygon,
-        merge=merge,
-    )
-    if return_dict:
-        metrics_dict["street_profile"] = result
-    result = _run_metric(
-        cell_gdf,
-        nearest_street_distance_metrics,
-        "nearest_street_distance",
-        buildings_gdf,
-        highways_gdf,
-        cell_polygon,
-        merge=merge,
-    )
-    if return_dict:
-        metrics_dict["nearest_street_distance"] = result
-
-    # Street connectivity metrics (degree, meshedness, gamma, etc. - same level as other metrics)
-    logger.info("Computing metric: connectivity")
-    t0 = time.perf_counter()
-    connectivity_results = compute_connectivity_metrics_by_name(
-        vehicles_gdf, pedestrians_gdf, cell_polygon
-    )
-    logger.info("Finished metric: connectivity (%.2fs)", time.perf_counter() - t0)
-    for metric_name, result in connectivity_results.items():
-        if merge and cell_gdf is not None and not result.empty:
-            _merge_columns(cell_gdf, result)
-        if return_dict:
-            metrics_dict[metric_name] = result
+    if any_connectivity:
+        if not quiet:
+            logger.info("Computing metric: connectivity")
+        t0 = time.perf_counter()
+        connectivity_results = compute_connectivity_metrics_by_name(
+            vehicles_gdf, pedestrians_gdf, cell_polygon
+        )
+        if not quiet:
+            logger.info("Finished metric: connectivity (%.2fs)", time.perf_counter() - t0)
+        for metric_name, result in connectivity_results.items():
+            if selected_metrics is not None and metric_name not in selected_metrics:
+                continue
+            if merge and cell_gdf is not None and not result.empty:
+                _merge_columns(cell_gdf, result)
+            if return_dict:
+                metrics_dict[metric_name] = result
 
     return metrics_dict if return_dict else cell_gdf
 
