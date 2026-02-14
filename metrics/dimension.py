@@ -166,11 +166,22 @@ def volume_metrics(
     equal_area_crs: CRS | str | int | None = None,
     equidistant_crs: CRS | str | int | None = None,
     conformal_crs: CRS | str | int | None = None,
+    floor_height: float = 3.0,
 ) -> gpd.GeoDataFrame:
     """Compute volume metrics for buildings in the cell.
 
-    Volume = area x height. Uses equal-area CRS for accurate area computation.
+    Volume = footprint area x building height.
+    The building height is determined by:
+    1. ``height`` column (from OSM ``height`` tag) when available.
+    2. ``building_levels * floor_height`` when levels are available but height is not.
+    3. Default height (6m) otherwise.
+
+    Args:
+        floor_height: Assumed height per floor in meters (default 3.0).
+
+    Uses equal-area CRS for accurate area computation.
     """
+
     prepared = prepare_buildings(
         buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
     )
@@ -178,7 +189,16 @@ def volume_metrics(
         return prepared.cell_gdf
 
     buildings = prepared.equal_area
-    s = momepy.volume(buildings["area"], buildings["height"])
+
+    # Resolve height: prefer parsed height, then levels * floor_height, then default
+    height = buildings["height"].copy()
+    if "building_levels" in buildings.columns:
+        from_levels = buildings["building_levels"] * floor_height
+        missing = height.isna()
+        height.loc[missing] = from_levels.loc[missing]
+    height = height.fillna(6.0)
+
+    s = buildings["area"] * height
     stats = aggregate_stats(s, prefix="volume", include_sum=True)
     for k, v in stats.items():
         prepared.cell_gdf[k] = v
