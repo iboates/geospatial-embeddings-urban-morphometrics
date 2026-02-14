@@ -5,6 +5,7 @@ import momepy
 from pyproj import CRS
 from shapely.geometry import Polygon
 import pandas as pd
+import numpy as np
 
 from ._utils import PreparedBuildings, aggregate_stats, prepare_buildings
 
@@ -69,10 +70,18 @@ def floor_area_metrics(
     equal_area_crs: CRS | str | int | None = None,
     equidistant_crs: CRS | str | int | None = None,
     conformal_crs: CRS | str | int | None = None,
+    floor_height: float = 3.0,
 ) -> gpd.GeoDataFrame:
     """Compute floor area metrics for buildings in the cell.
 
-    Floor area estimates total usable floor space as area x (height // floor_height).
+    Floor area = footprint area x number of levels.
+    The number of levels is determined by:
+    1. ``building_levels`` column (from OSM ``building:levels`` tag) when available.
+    2. Otherwise, ``height / floor_height`` (rounded down, minimum 1).
+
+    Args:
+        floor_height: Assumed height per floor in meters (default 3.0).
+
     Uses equal-area CRS for accurate area computation.
     """
     prepared = prepare_buildings(
@@ -82,7 +91,20 @@ def floor_area_metrics(
         return prepared.cell_gdf
 
     buildings = prepared.equal_area
-    s = momepy.floor_area(buildings["area"], buildings["height"])
+
+    # Determine number of levels per building
+    if "building_levels" in buildings.columns:
+        levels = buildings["building_levels"].copy()
+    else:
+        levels = pd.Series(np.nan, index=buildings.index)
+
+    # Where levels are missing, derive from height / floor_height
+    missing = levels.isna()
+    if missing.any():
+        derived = np.floor(buildings.loc[missing, "height"] / floor_height).clip(lower=1)
+        levels.loc[missing] = derived
+
+    s = buildings["area"] * levels
     stats = aggregate_stats(s, prefix="floor_area", include_sum=True)
     for k, v in stats.items():
         prepared.cell_gdf[k] = v

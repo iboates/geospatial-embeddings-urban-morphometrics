@@ -150,13 +150,28 @@ def prepare_buildings(
     ed_crs = CRS(equidistant_crs) if equidistant_crs is not None else fallback
     cf_crs = CRS(conformal_crs) if conformal_crs is not None else fallback
 
-    # Infer heights before reprojecting (tags are CRS-independent)
-    if "tags" in buildings.columns:
-        heights = buildings["tags"].apply(_infer_height_from_tags)
-        buildings["height"] = heights
-    else:
-        buildings["height"] = np.nan
+    # Resolve building height: prefer pre-parsed 'height' column, then
+    # fall back to building_levels * 3m, then default 6m (≈2 storeys).
+    if "height" not in buildings.columns:
+        # Legacy path: try inferring from tags dict
+        if "tags" in buildings.columns:
+            buildings["height"] = buildings["tags"].apply(_infer_height_from_tags)
+        else:
+            buildings["height"] = np.nan
+
+    # Where height is still missing, derive from building_levels
+    if "building_levels" in buildings.columns:
+        missing_height = buildings["height"].isna()
+        has_levels = buildings["building_levels"].notna()
+        buildings.loc[missing_height & has_levels, "height"] = (
+            buildings.loc[missing_height & has_levels, "building_levels"] * 3.0
+        )
+
     buildings["height"] = buildings["height"].fillna(6.0)
+
+    # Ensure building_levels column exists (for floor_area_metrics)
+    if "building_levels" not in buildings.columns:
+        buildings["building_levels"] = np.nan
 
     # Project to equal-area first for accurate area computation
     buildings_ea = buildings.to_crs(ea_crs)

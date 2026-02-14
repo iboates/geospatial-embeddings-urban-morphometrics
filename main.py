@@ -79,11 +79,78 @@ def _cache_key(region_ids: list[str]) -> str:
     return hashlib.md5(joined.encode()).hexdigest()
 
 
+def _parse_height(val) -> float | None:
+    """Parse an OSM height value (e.g. '15', '15m', '50 ft') into meters."""
+    import re
+
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if not isinstance(val, str):
+        return None
+    val = val.strip().lower()
+    match = re.match(r"^([\d.]+)\s*(m|metres?|meters?|ft|feet)?", val)
+    if match:
+        num = float(match.group(1))
+        unit = (match.group(2) or "m").lower()
+        if "ft" in unit or "feet" in unit:
+            num *= 0.3048
+        return num
+    return None
+
+
+def _parse_levels(val) -> float | None:
+    """Parse a building:levels value into a numeric count."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _add_building_columns(buildings_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Extract height and building:levels from OSM tags into proper columns.
+
+    Adds ``height`` (meters) and ``building_levels`` (count) columns.
+    Values are parsed from the ``tags`` dict column or from exploded tag columns.
+    """
+    buildings = buildings_gdf.copy()
+    has_tags = "tags" in buildings.columns
+
+    # Parse height
+    if "height" in buildings.columns:
+        buildings["height"] = buildings["height"].apply(_parse_height)
+    elif has_tags:
+        buildings["height"] = buildings["tags"].apply(
+            lambda t: _parse_height(t.get("height")) if isinstance(t, dict) else None
+        )
+    else:
+        buildings["height"] = None
+
+    # Parse building:levels
+    if "building:levels" in buildings.columns:
+        buildings["building_levels"] = buildings["building:levels"].apply(_parse_levels)
+    elif has_tags:
+        buildings["building_levels"] = buildings["tags"].apply(
+            lambda t: _parse_levels(t.get("building:levels")) if isinstance(t, dict) else None
+        )
+    else:
+        buildings["building_levels"] = None
+
+    return buildings
+
+
 def _extract_osm_data(pbf_file: str, geometry_filter):
     """Extract buildings, highways, and landuse from PBF for a geometry filter."""
     buildings_gdf = qosm.convert_pbf_to_geodataframe(
-        pbf_file, tags_filter={"building": True}, geometry_filter=geometry_filter
+        pbf_file,
+        tags_filter={"building": True},
+        geometry_filter=geometry_filter,
+        keep_all_tags=True,
     ).to_crs(4326)
+    buildings_gdf = _add_building_columns(buildings_gdf)
     highways_gdf = qosm.convert_pbf_to_geodataframe(
         pbf_file,
         tags_filter={"highway": True},
