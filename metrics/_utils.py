@@ -1,10 +1,12 @@
 """Utility functions for metrics computation."""
 
 import re
+from dataclasses import dataclass
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from pyproj import CRS
 from shapely.geometry import Polygon
 
 
@@ -39,16 +41,85 @@ def _infer_height_from_tags(tags) -> float | None:
     return None
 
 
+@dataclass
+class PreparedBuildings:
+    """Buildings projected into CRSes suited for different geometric operations.
+
+    Attributes:
+        equal_area: GeoDataFrame projected to an equal-area CRS (accurate area).
+        equidistant: GeoDataFrame projected to an equidistant CRS (accurate distances).
+        conformal: GeoDataFrame projected to a conformal CRS (accurate angles).
+        cell_gdf: Cell polygon GeoDataFrame (projected to equidistant CRS).
+    """
+
+    equal_area: gpd.GeoDataFrame
+    equidistant: gpd.GeoDataFrame
+    conformal: gpd.GeoDataFrame
+    cell_gdf: gpd.GeoDataFrame
+
+
+@dataclass
+class PreparedHighways:
+    """Highways projected into CRSes suited for different geometric operations.
+
+    Attributes:
+        equidistant: GeoDataFrame projected to an equidistant CRS (accurate distances).
+        conformal: GeoDataFrame projected to a conformal CRS (accurate angles).
+    """
+
+    equidistant: gpd.GeoDataFrame
+    conformal: gpd.GeoDataFrame
+
+
+def _estimate_fallback_crs(gdf: gpd.GeoDataFrame) -> CRS:
+    """Estimate a UTM CRS from a GeoDataFrame, with a fallback."""
+    try:
+        return gdf.estimate_utm_crs()
+    except Exception:
+        return CRS.from_epsg(32632)
+
+
 def prepare_buildings(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
-) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Prepare buildings for metrics: filter to polygons, reproject, add height/area.
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
+) -> PreparedBuildings:
+    """Prepare buildings for metrics: filter to polygons, reproject to three CRSes.
 
-    Returns (buildings_projected, cell_projected) in a suitable projected CRS.
+    Each CRS is used for the geometric operations it's best suited for:
+    - equal_area_crs: area calculations (courtyard area, floor area, volume, etc.)
+    - equidistant_crs: distance/length calculations (perimeter, axis length, etc.)
+    - conformal_crs: angular calculations (orientation, squareness, corners, etc.)
+
+    Area and height columns are added to all three projections. Area is always
+    computed from the equal-area projection for accuracy.
+
+    Args:
+        buildings_gdf: Raw buildings GeoDataFrame (WGS84).
+        cell_polygon: The analysis cell polygon (WGS84).
+        equal_area_crs: CRS for area calculations. Defaults to estimated UTM.
+        equidistant_crs: CRS for distance calculations. Defaults to estimated UTM.
+        conformal_crs: CRS for angular calculations. Defaults to estimated UTM.
+
+    Returns:
+        PreparedBuildings with equal_area, equidistant, conformal, and cell_gdf.
     """
+    empty_gdf = gpd.GeoDataFrame()
+
     if buildings_gdf.empty:
-        return buildings_gdf, gpd.GeoDataFrame()
+        cell_gdf = gpd.GeoDataFrame(
+            [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
+        )
+        fallback = _estimate_fallback_crs(cell_gdf)
+        cell_gdf = cell_gdf.to_crs(equidistant_crs or fallback)
+        return PreparedBuildings(
+            equal_area=empty_gdf,
+            equidistant=empty_gdf,
+            conformal=empty_gdf,
+            cell_gdf=cell_gdf,
+        )
 
     # Ensure CRS
     if buildings_gdf.crs is None:
@@ -64,32 +135,49 @@ def prepare_buildings(
     )
 
     if buildings.empty:
-        try:
-            utm_crs = cell_gdf.estimate_utm_crs()
-        except Exception:
-            utm_crs = "EPSG:32632"
-        cell_gdf = cell_gdf.to_crs(utm_crs)
-        return buildings, cell_gdf
+        fallback = _estimate_fallback_crs(cell_gdf)
+        cell_gdf = cell_gdf.to_crs(equidistant_crs or fallback)
+        return PreparedBuildings(
+            equal_area=empty_gdf,
+            equidistant=empty_gdf,
+            conformal=empty_gdf,
+            cell_gdf=cell_gdf,
+        )
 
-    # Reproject to UTM for accurate area/length
-    try:
-        utm_crs = buildings.estimate_utm_crs()
-    except Exception:
-        utm_crs = "EPSG:32632"  # fallback for Central Europe
-    buildings = buildings.to_crs(utm_crs)
-    cell_gdf = cell_gdf.to_crs(utm_crs)
+    # Resolve CRS defaults
+    fallback = _estimate_fallback_crs(buildings)
+    ea_crs = CRS(equal_area_crs) if equal_area_crs is not None else fallback
+    ed_crs = CRS(equidistant_crs) if equidistant_crs is not None else fallback
+    cf_crs = CRS(conformal_crs) if conformal_crs is not None else fallback
 
-    # Add area and height
-    buildings["area"] = buildings.geometry.area
+    # Infer heights before reprojecting (tags are CRS-independent)
     if "tags" in buildings.columns:
         heights = buildings["tags"].apply(_infer_height_from_tags)
         buildings["height"] = heights
     else:
         buildings["height"] = np.nan
-    # Default height where missing (e.g. 2 floors)
     buildings["height"] = buildings["height"].fillna(6.0)
 
-    return buildings, cell_gdf
+    # Project to equal-area first for accurate area computation
+    buildings_ea = buildings.to_crs(ea_crs)
+    area_values = buildings_ea.geometry.area
+    buildings_ea["area"] = area_values
+
+    # Project to equidistant and conformal, carrying area from equal-area
+    buildings_ed = buildings.to_crs(ed_crs)
+    buildings_ed["area"] = area_values.values
+
+    buildings_cf = buildings.to_crs(cf_crs)
+    buildings_cf["area"] = area_values.values
+
+    cell_gdf = cell_gdf.to_crs(ed_crs)
+
+    return PreparedBuildings(
+        equal_area=buildings_ea,
+        equidistant=buildings_ed,
+        conformal=buildings_cf,
+        cell_gdf=cell_gdf,
+    )
 
 
 def _parse_oneway(tags, highway_val) -> bool:
@@ -126,10 +214,27 @@ def _default_oneway(highway_val, junction) -> bool:
 def prepare_highways(
     highways_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
-) -> gpd.GeoDataFrame:
-    """Prepare highways for metrics: filter to LineStrings, reproject."""
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
+) -> PreparedHighways:
+    """Prepare highways for metrics: filter to LineStrings, reproject to two CRSes.
+
+    - equidistant_crs: distance/length calculations (connectivity, profile width).
+    - conformal_crs: angular calculations (street orientation/alignment).
+
+    Args:
+        highways_gdf: Raw highways GeoDataFrame (WGS84).
+        cell_polygon: The analysis cell polygon (WGS84).
+        equidistant_crs: CRS for distance calculations. Defaults to estimated UTM.
+        conformal_crs: CRS for angular calculations. Defaults to estimated UTM.
+
+    Returns:
+        PreparedHighways with equidistant and conformal projections.
+    """
+    empty_gdf = gpd.GeoDataFrame()
+
     if highways_gdf.empty:
-        return highways_gdf
+        return PreparedHighways(equidistant=empty_gdf, conformal=empty_gdf)
 
     if highways_gdf.crs is None:
         highways_gdf = highways_gdf.set_crs(4326)
@@ -139,17 +244,20 @@ def prepare_highways(
     highways = highways[line_mask].copy()
 
     if highways.empty:
-        return highways
+        return PreparedHighways(equidistant=empty_gdf, conformal=empty_gdf)
 
-    try:
-        cell_temp = gpd.GeoDataFrame(
-            [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
-        )
-        utm_crs = cell_temp.estimate_utm_crs()
-    except Exception:
-        utm_crs = "EPSG:32632"
-    highways = highways.to_crs(utm_crs)
-    return highways
+    # Resolve CRS defaults
+    cell_temp = gpd.GeoDataFrame(
+        [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
+    )
+    fallback = _estimate_fallback_crs(cell_temp)
+    ed_crs = CRS(equidistant_crs) if equidistant_crs is not None else fallback
+    cf_crs = CRS(conformal_crs) if conformal_crs is not None else fallback
+
+    highways_ed = highways.to_crs(ed_crs)
+    highways_cf = highways.to_crs(cf_crs)
+
+    return PreparedHighways(equidistant=highways_ed, conformal=highways_cf)
 
 
 def aggregate_stats(

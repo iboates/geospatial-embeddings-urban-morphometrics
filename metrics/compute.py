@@ -4,6 +4,7 @@ import logging
 import time
 
 import geopandas as gpd
+from pyproj import CRS
 from shapely.geometry import Polygon
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,8 @@ from .street_connectivity import (
 )
 
 # Registry of building/street metrics: (name, function, arg_style)
-# arg_style: "buildings" = (buildings_gdf, cell_polygon)
-#             "streets"  = (buildings_gdf, highways_gdf, cell_polygon)
+# arg_style: "buildings" = (buildings_gdf, cell_polygon, ea, ed, cf)
+#             "streets"  = (buildings_gdf, highways_gdf, cell_polygon, ea, ed, cf)
 _BUILDING_METRICS = [
     ("courtyard_area", courtyard_area_metrics, "buildings"),
     ("floor_area", floor_area_metrics, "buildings"),
@@ -152,6 +153,9 @@ def compute_all_metrics(
     return_dict: bool = False,
     selected_metrics: set[str] | None = None,
     quiet: bool = False,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame | dict[str, gpd.GeoDataFrame]:
     """Compute building morphology and street connectivity metrics.
 
@@ -167,6 +171,9 @@ def compute_all_metrics(
         selected_metrics: If provided, only compute metrics whose names are in this set.
             If None, compute all metrics.
         quiet: If True, suppress per-metric log messages.
+        equal_area_crs: CRS for area calculations. Defaults to estimated UTM.
+        equidistant_crs: CRS for distance calculations. Defaults to estimated UTM.
+        conformal_crs: CRS for angular calculations. Defaults to estimated UTM.
 
     Returns:
         If return_dict=False: GeoDataFrame with one row, geometry=cell_polygon,
@@ -174,6 +181,12 @@ def compute_all_metrics(
             with keys like "courtyard_area", "floor_area", etc.
     """
     _configure_logging()
+
+    crs_kwargs = dict(
+        equal_area_crs=equal_area_crs,
+        equidistant_crs=equidistant_crs,
+        conformal_crs=conformal_crs,
+    )
 
     merge = not return_dict
     metrics_dict: dict[str, gpd.GeoDataFrame] = {}
@@ -187,6 +200,8 @@ def compute_all_metrics(
             args = (buildings_gdf, highways_gdf, cell_polygon)
         else:
             args = (buildings_gdf, cell_polygon)
+        # Append CRS kwargs to positional args
+        args = (*args, equal_area_crs, equidistant_crs, conformal_crs)
 
         if cell_gdf is None:
             # First metric establishes the base GeoDataFrame
@@ -206,7 +221,11 @@ def compute_all_metrics(
     # Ensure we have a base cell_gdf even if all building metrics were skipped
     if cell_gdf is None:
         from ._utils import prepare_buildings
-        _, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
+        prepared = prepare_buildings(
+            buildings_gdf, cell_polygon,
+            equal_area_crs, equidistant_crs, conformal_crs,
+        )
+        cell_gdf = prepared.cell_gdf
 
     # Street connectivity metrics
     any_connectivity = selected_metrics is None or any(
@@ -217,7 +236,8 @@ def compute_all_metrics(
             logger.info("Computing metric: connectivity")
         t0 = time.perf_counter()
         connectivity_results = compute_connectivity_metrics_by_name(
-            vehicles_gdf, pedestrians_gdf, cell_polygon
+            vehicles_gdf, pedestrians_gdf, cell_polygon,
+            equidistant_crs=equidistant_crs, conformal_crs=conformal_crs,
         )
         if not quiet:
             logger.info("Finished metric: connectivity (%.2fs)", time.perf_counter() - t0)

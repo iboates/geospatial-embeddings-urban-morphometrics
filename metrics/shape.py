@@ -2,6 +2,7 @@
 
 import geopandas as gpd
 import momepy
+from pyproj import CRS
 from shapely.geometry import Polygon
 
 from ._utils import aggregate_stats, prepare_buildings
@@ -10,349 +11,360 @@ from ._utils import aggregate_stats, prepare_buildings
 def circular_compactness_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute circular compactness metrics for buildings in the cell.
+    """Compute circular compactness (area / area of enclosing circle).
 
-    Circular compactness = area / area of enclosing circle. Values range 0–1;
-    a circle has 1, elongated shapes have lower values. Measures how
-    compact vs. spread out buildings are.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of circular compactness per building.
+    Uses equal-area CRS for accurate area computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equal_area.empty:
+        return prepared.cell_gdf
 
-    s = momepy.circular_compactness(buildings)
+    s = momepy.circular_compactness(prepared.equal_area)
     stats = aggregate_stats(s, prefix="circular_compactness")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def square_compactness_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute square compactness metrics for buildings in the cell.
+    """Compute square compactness = (4*sqrt(area) / perimeter)^2.
 
-    Square compactness = (4√area / perimeter)². Values range 0–1; a square
-    has 1. Common in urban morphology for measuring regularity.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of square compactness per building.
+    Dimensionless ratio mixing area and perimeter. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.square_compactness(buildings)
+    s = momepy.square_compactness(prepared.equidistant)
     stats = aggregate_stats(s, prefix="square_compactness")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def convexity_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute convexity metrics for buildings in the cell.
+    """Compute convexity (area / area of convex hull).
 
-    Convexity = area / area of convex hull. Values range 0–1; convex
-    polygons have 1. Indicates concavity (e.g. L-shapes, courtyards).
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of convexity per building.
+    Uses equal-area CRS for accurate area computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equal_area.empty:
+        return prepared.cell_gdf
 
-    s = momepy.convexity(buildings)
+    s = momepy.convexity(prepared.equal_area)
     stats = aggregate_stats(s, prefix="convexity")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def courtyard_index_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute courtyard index metrics for buildings in the cell.
+    """Compute courtyard index (courtyard area / total area).
 
-    Courtyard index = courtyard area / total area. Proportion of building
-    footprint devoted to interior courtyards. Higher values indicate
-    atrium-style or courtyard buildings.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of courtyard index per building.
+    Uses equal-area CRS for accurate area computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equal_area.empty:
+        return prepared.cell_gdf
 
-    s = momepy.courtyard_index(buildings)
+    s = momepy.courtyard_index(prepared.equal_area)
     stats = aggregate_stats(s, prefix="courtyard_index")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def rectangularity_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute rectangularity metrics for buildings in the cell.
+    """Compute rectangularity (area / area of minimum rotated rectangle).
 
-    Rectangularity = area / area of minimum rotated rectangle. Values 0–1;
-    a rectangle has 1. Measures how close buildings are to rectangular form.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of rectangularity per building.
+    Uses equal-area CRS for accurate area computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equal_area.empty:
+        return prepared.cell_gdf
 
-    s = momepy.rectangularity(buildings)
+    s = momepy.rectangularity(prepared.equal_area)
     stats = aggregate_stats(s, prefix="rectangularity")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def shape_index_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute shape index metrics for buildings in the cell.
+    """Compute shape index = sqrt(area/pi) / (0.5 * longest axis).
 
-    Shape index = √(area/π) / (0.5 × longest axis). Compares the radius of
-    an equivalent circle to half the longest axis. Values near 1 indicate
-    compact, round shapes.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of shape index per building.
+    Dimensionless ratio mixing area and length. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.shape_index(buildings)
+    s = momepy.shape_index(prepared.equidistant)
     stats = aggregate_stats(s, prefix="shape_index")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def corners_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute corners count metrics for buildings in the cell.
+    """Compute corners count (vertices where angle deviates from 180 deg).
 
-    Counts vertices where the angle deviates from 180° by more than 10°.
-    Indicates complexity of building footprints.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of corner count per building.
+    Uses conformal CRS for accurate angle computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.conformal.empty:
+        return prepared.cell_gdf
 
-    s = momepy.corners(buildings)
+    s = momepy.corners(prepared.conformal)
     stats = aggregate_stats(s, prefix="corners", include_sum=True)
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def squareness_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute squareness metrics for buildings in the cell.
+    """Compute squareness (mean deviation of corner angles from 90 deg).
 
-    Squareness is the mean deviation of corner angles from 90°. Lower values
-    indicate more rectangular (right-angled) corners.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of squareness per building.
+    Uses conformal CRS for accurate angle computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.conformal.empty:
+        return prepared.cell_gdf
 
-    s = momepy.squareness(buildings)
+    s = momepy.squareness(prepared.conformal)
     stats = aggregate_stats(s, prefix="squareness")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def equivalent_rectangular_index_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute equivalent rectangular index metrics for buildings in the cell.
+    """Compute equivalent rectangular index (area and perimeter ratios).
 
-    Combines area and perimeter ratios with the minimum bounding rectangle.
-    Measures how well a shape approximates a rectangle in both area and form.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of equivalent rectangular index per building.
+    Dimensionless ratio mixing area and perimeter. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.equivalent_rectangular_index(buildings)
+    s = momepy.equivalent_rectangular_index(prepared.equidistant)
     stats = aggregate_stats(s, prefix="equivalent_rectangular_index")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def elongation_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute elongation metrics for buildings in the cell.
+    """Compute elongation (shorter/longer side of minimum bounding rectangle).
 
-    Elongation is the ratio of the shorter to longer side of the minimum
-    bounding rectangle. Values 0–1; squares have 1, lines approach 0.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of elongation per building.
+    Dimensionless ratio. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.elongation(buildings)
+    s = momepy.elongation(prepared.equidistant)
     stats = aggregate_stats(s, prefix="elongation")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def facade_ratio_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute facade ratio metrics for buildings in the cell.
+    """Compute facade ratio (area / perimeter).
 
-    Facade ratio = area / perimeter. Larger values indicate more compact
-    footprints with less perimeter per unit area.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of facade ratio per building.
+    Dimensionless ratio mixing area and perimeter. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.facade_ratio(buildings)
+    s = momepy.facade_ratio(prepared.equidistant)
     stats = aggregate_stats(s, prefix="facade_ratio")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def fractal_dimension_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute fractal dimension metrics for buildings in the cell.
+    """Compute fractal dimension = 2*log(perimeter/4) / log(area).
 
-    Fractal dimension = 2×log(perimeter/4) / log(area). Measures complexity
-    of the boundary; values typically 1–2; higher values indicate more
-    irregular outlines.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of fractal dimension per building.
+    Dimensionless ratio mixing area and perimeter. Uses equidistant CRS.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.fractal_dimension(buildings)
+    s = momepy.fractal_dimension(prepared.equidistant)
     stats = aggregate_stats(s, prefix="fractal_dimension")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def form_factor_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute form factor metrics for buildings in the cell.
+    """Compute form factor = surface / volume^(2/3).
 
-    Form factor = surface / volume^(2/3), where surface includes walls and roof.
-    Lower values indicate more compact, cube-like buildings.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of form factor per building.
+    Uses equal-area CRS for accurate surface area and volume computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equal_area.empty:
+        return prepared.cell_gdf
 
+    buildings = prepared.equal_area
     s = momepy.form_factor(buildings, buildings["height"])
     stats = aggregate_stats(s, prefix="form_factor")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def compactness_weighted_axis_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute compactness-weighted axis metrics for buildings in the cell.
+    """Compute compactness-weighted axis (longest axis length + compactness).
 
-    Combines longest axis length with a compactness term. Captures both
-    scale and shape in a single measure.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean, std,
-    and deciles (p10–p90) of compactness-weighted axis per building.
+    Uses equidistant CRS for accurate distance computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    s = momepy.compactness_weighted_axis(buildings)
+    s = momepy.compactness_weighted_axis(prepared.equidistant)
     stats = aggregate_stats(s, prefix="compactness_weighted_axis")
     for k, v in stats.items():
-        cell_gdf[k] = v
-    return cell_gdf
+        prepared.cell_gdf[k] = v
+    return prepared.cell_gdf
 
 
 def centroid_corner_distance_metrics(
     buildings_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute centroid-corner distance metrics for buildings in the cell.
+    """Compute centroid-corner distance (mean and std of distances).
 
-    Measures mean and std of distances from centroid to corners. Indicates
-    spread and uniformity of building footprint.
-
-    Returns a GeoDataFrame with one row (cell_polygon) and columns: mean_mean,
-    mean_std, std_mean, std_std, and deciles for centroid-corner distance
-    mean and std per building.
+    Uses equidistant CRS for accurate distance computation.
     """
-    buildings, cell_gdf = prepare_buildings(buildings_gdf, cell_polygon)
-    if buildings.empty:
-        return cell_gdf
+    prepared = prepare_buildings(
+        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
+    )
+    if prepared.equidistant.empty:
+        return prepared.cell_gdf
 
-    df = momepy.centroid_corner_distance(buildings)
+    df = momepy.centroid_corner_distance(prepared.equidistant)
     for col in ["mean", "std"]:
         stats = aggregate_stats(df[col], prefix=f"centroid_corner_distance_{col}")
         for k, v in stats.items():
-            cell_gdf[k] = v
-    return cell_gdf
+            prepared.cell_gdf[k] = v
+    return prepared.cell_gdf

@@ -1,4 +1,4 @@
-"""Street network connectivity metrics for vehicle, cycle, and pedestrian networks."""
+"""Street network connectivity metrics for vehicle and pedestrian networks."""
 
 import logging
 
@@ -6,6 +6,7 @@ import geopandas as gpd
 import momepy
 import networkx as nx
 import numpy as np
+from pyproj import CRS
 from shapely.geometry import Polygon
 
 from ._utils import _parse_oneway, aggregate_stats, prepare_highways
@@ -157,9 +158,17 @@ def connectivity_metrics(
     network_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
     mode: str,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute street connectivity metrics for a pre-filtered network."""
-    highways = prepare_highways(network_gdf, cell_polygon)
+    """Compute street connectivity metrics for a pre-filtered network.
+
+    Uses equidistant CRS for accurate edge lengths and distances.
+    """
+    highways_prep = prepare_highways(
+        network_gdf, cell_polygon, equidistant_crs, conformal_crs
+    )
+    highways = highways_prep.equidistant
 
     cell_gdf = gpd.GeoDataFrame(
         [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
@@ -189,6 +198,8 @@ def compute_connectivity_metrics_by_name(
     vehicles_gdf: gpd.GeoDataFrame,
     pedestrians_gdf: gpd.GeoDataFrame,
     cell_polygon: Polygon,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> dict[str, gpd.GeoDataFrame]:
     """Compute connectivity metrics for vehicle and pedestrian networks.
 
@@ -201,7 +212,10 @@ def compute_connectivity_metrics_by_name(
     all_stats: dict[str, float] = {}
 
     for mode, gdf in [("vehicle", vehicles_gdf), ("pedestrian", pedestrians_gdf)]:
-        result = connectivity_metrics(gdf, cell_polygon, mode=mode)
+        result = connectivity_metrics(
+            gdf, cell_polygon, mode=mode,
+            equidistant_crs=equidistant_crs, conformal_crs=conformal_crs,
+        )
         for col in result.columns:
             if col != "geometry":
                 all_stats[col] = result[col].iloc[0]

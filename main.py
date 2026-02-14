@@ -9,6 +9,7 @@ import geopandas as gpd
 import pandas as pd
 import quackosm as qosm
 import requests
+from pyproj import CRS
 from shapely.geometry import Polygon
 
 from metrics import compute_all_metrics
@@ -212,6 +213,9 @@ def compute_urban_morphometrics(
     pbf_url: str,
     save_data_path: str | None = None,
     metrics: list[str] | str | None = None,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
     """Extract OSM data and compute building morphology metrics for each polygon.
 
@@ -231,6 +235,11 @@ def compute_urban_morphometrics(
             ["courtyard_area", "elongation", "degree_vehicle"]). A single
             string is auto-wrapped into a list. If omitted, all metrics
             are computed.
+        equal_area_crs: CRS for area calculations (e.g. EPSG code, CRS object).
+            Defaults to estimated UTM.
+        equidistant_crs: CRS for distance/length calculations. Defaults to
+            estimated UTM.
+        conformal_crs: CRS for angular calculations. Defaults to estimated UTM.
 
     Returns:
         GeoDataFrame with one row per input polygon and all metric columns.
@@ -291,6 +300,9 @@ def compute_urban_morphometrics(
             return_dict=False,
             selected_metrics=selected_metrics,
             quiet=True,
+            equal_area_crs=equal_area_crs,
+            equidistant_crs=equidistant_crs,
+            conformal_crs=conformal_crs,
         )
 
         row = {}
