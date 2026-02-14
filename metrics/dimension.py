@@ -143,7 +143,7 @@ def perimeter_wall_metrics(
     equidistant_crs: CRS | str | int | None = None,
     conformal_crs: CRS | str | int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Compute perimeter wall length metrics for buildings in the cell.
+    """Compute perimeter wall length metrics for buildings in the cell. Returns the perimeter of the JOINED STRUCTURES, i.e. all buildings which are touching
 
     Uses equidistant CRS for accurate perimeter/length computation.
     """
