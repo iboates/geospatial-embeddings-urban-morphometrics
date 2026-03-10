@@ -12,7 +12,7 @@ from ._utils import aggregate_stats, prepare_buildings, prepare_highways
 def _build_graphs(buildings: gpd.GeoDataFrame):
     """Build tessellation, contiguity, and neighborhood graphs for distribution metrics."""
     try:
-        limit = momepy.buffered_limit(buildings)
+        limit = momepy.buffered_limit(buildings, buffer=5)
         tessellation = momepy.morphological_tessellation(buildings, clip=limit)
     except Exception:
         return None, None, None
@@ -63,6 +63,10 @@ def shared_walls_metrics(
 ) -> gpd.GeoDataFrame:
     """Compute shared wall length between adjacent buildings.
 
+    Returns two sets of metrics:
+    - shared_walls_*: absolute shared wall length.
+    - shared_walls_ratio_*: shared wall length as ratio of building perimeter.
+
     Uses equidistant CRS for accurate length computation.
     """
     prepared = prepare_buildings(
@@ -71,10 +75,22 @@ def shared_walls_metrics(
     if prepared.equidistant.empty:
         return prepared.cell_gdf
 
-    s = momepy.shared_walls(prepared.equidistant)
+    buildings = prepared.equidistant
+
+    # Absolute shared wall length
+    s = momepy.shared_walls(buildings)
+    s.name = "shared_walls"
     stats = aggregate_stats(s, prefix="shared_walls", include_sum=True)
     for k, v in stats.items():
         prepared.cell_gdf[k] = v
+
+    # Shared wall length as ratio of building perimeter
+    perimeter = buildings.geometry.length
+    ratio = s / perimeter
+    stats_ratio = aggregate_stats(ratio, prefix="shared_walls_ratio", include_sum=True)
+    for k, v in stats_ratio.items():
+        prepared.cell_gdf[k] = v
+
     return prepared.cell_gdf
 
 
@@ -133,6 +149,7 @@ def neighbor_distance_metrics(
         return prepared.cell_gdf
 
     s = momepy.neighbor_distance(buildings, tri)
+    s.name = "neighbor_distance"
     stats = aggregate_stats(s.dropna(), prefix="neighbor_distance")
     for k, v in stats.items():
         prepared.cell_gdf[k] = v
@@ -257,7 +274,7 @@ def street_alignment_metrics(
     buildings = prepared.conformal
     highways = highways_prep.conformal
 
-    street_idx = momepy.get_nearest_street(buildings, highways, max_distance=200)
+    street_idx = momepy.get_nearest_street(buildings, highways, max_distance=500)
     valid = street_idx.notna()
     if not valid.any():
         return prepared.cell_gdf

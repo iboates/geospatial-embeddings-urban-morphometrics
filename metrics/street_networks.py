@@ -8,7 +8,7 @@ VEHICLE_HIGHWAY = {
     "motorway", "motorway_link", "trunk", "trunk_link",
     "primary", "primary_link", "secondary", "secondary_link",
     "tertiary", "tertiary_link", "unclassified", "residential",
-    "service", "living_street", "road", "track",
+    "living_street", "road", "track",
 }
 
 # Pedestrian: pedestrian-only infrastructure (including shared roeads)
