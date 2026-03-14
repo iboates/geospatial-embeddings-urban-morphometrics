@@ -3,37 +3,36 @@
 import geopandas as gpd
 import momepy
 from libpysal.graph import Graph
-from pyproj import CRS
-from shapely.geometry import Polygon
 
-from ._utils import aggregate_stats, prepare_buildings
+from ._utils import CellContext, aggregate_stats
 
 
-def courtyards_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def courtyards_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute courtyards count metrics (number of interior rings).
+
+    Neighbourhood-aware: uses neighbourhood buildings to correctly compute
+    contiguity at cell boundaries, then filters aggregation to focal buildings.
 
     Primarily topological. Uses equidistant CRS.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    buildings = prepared.equidistant
     try:
         contiguity = Graph.build_contiguity(buildings, rook=True)
     except Exception:
-        return prepared.cell_gdf
+        return cell_gdf
 
     s = momepy.courtyards(buildings, contiguity)
-    stats = aggregate_stats(s, prefix="courtyards", include_sum=True)
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="courtyards", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["courtyards"] = s_focal
+        ctx.dump("courtyards", _d)
+    return cell_gdf

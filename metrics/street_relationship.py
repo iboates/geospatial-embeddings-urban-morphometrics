@@ -2,41 +2,35 @@
 
 import geopandas as gpd
 import momepy
-from pyproj import CRS
-from shapely.geometry import Polygon
 
-from ._utils import aggregate_stats, prepare_buildings, prepare_highways
+from ._utils import CellContext, aggregate_stats
 
 
 def street_profile_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    highways_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
+    ctx: CellContext,
     distance: float = 10,
     tick_length: float = 50,
 ) -> gpd.GeoDataFrame:
     """Compute street profile metrics (width, openness, height-width ratio).
 
+    Neighbourhood-aware: uses neighbourhood buildings and highways for the profile
+    computation. Guards on focal buildings being empty (no streets to profile).
+
     Uses equidistant CRS for accurate width/distance computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    highways_prep = prepare_highways(
-        highways_gdf, cell_polygon, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty or highways_prep.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    if ctx.focal_buildings.equidistant.empty:
+        return cell_gdf
 
-    buildings = prepared.equidistant
-    highways = highways_prep.equidistant
+    profile_buildings = ctx.neighbourhood_buildings.equidistant
+    highways = ctx.neighbourhood_highways.equidistant
 
-    height = buildings["height"] if "height" in buildings.columns else None
+    if highways.empty:
+        return cell_gdf
+
+    height = profile_buildings["height"] if "height" in profile_buildings.columns else None
     df = momepy.street_profile(
-        highways, buildings, distance=distance, tick_length=tick_length, height=height
+        highways, profile_buildings, distance=distance, tick_length=tick_length, height=height
     )
 
     summable_cols = {"width", "height"}
@@ -47,39 +41,37 @@ def street_profile_metrics(
             include_sum=col in summable_cols,
         )
         for k, v in stats.items():
-            prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+            cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        ctx.dump("street_profile", highways[["geometry"]].assign(**{
+            col: df[col] for col in df.columns
+        }))
+    return cell_gdf
 
 
 def nearest_street_distance_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    highways_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
+    ctx: CellContext,
     max_distance: float = 200,
 ) -> gpd.GeoDataFrame:
     """Compute distance to nearest street.
 
+    Uses focal buildings and neighbourhood highways for accurate edge distances.
+
     Uses equidistant CRS for accurate distance computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    highways_prep = prepare_highways(
-        highways_gdf, cell_polygon, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty or highways_prep.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.equidistant
+    highways = ctx.neighbourhood_highways.equidistant
 
-    buildings = prepared.equidistant
-    highways = highways_prep.equidistant
+    if buildings.empty or highways.empty:
+        return cell_gdf
 
     dist_series = buildings.geometry.apply(
         lambda g: highways.geometry.distance(g).min()
     )
     stats = aggregate_stats(dist_series.dropna(), prefix="nearest_street_distance")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        ctx.dump("nearest_street_distance", buildings[["geometry"]].assign(nearest_street_distance=dist_series))
+    return cell_gdf

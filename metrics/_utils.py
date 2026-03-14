@@ -1,13 +1,20 @@
 """Utility functions for metrics computation."""
 
+import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import geopandas as gpd
+import momepy
+import networkx as nx
 import numpy as np
 import pandas as pd
+from libpysal.graph import Graph
 from pyproj import CRS
 from shapely.geometry import Polygon
+
+logger = logging.getLogger(__name__)
 
 
 def _infer_height_from_tags(tags) -> float | None:
@@ -310,3 +317,267 @@ def aggregate_stats(
             out[f"{p}p{q}"] = valid.quantile(q / 100)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Internal graph-building helpers (used by CellContext lazy properties)
+# ---------------------------------------------------------------------------
+
+def _build_tessellation_graphs(
+    buildings: gpd.GeoDataFrame,
+) -> tuple[gpd.GeoDataFrame | None, Graph | None, Graph | None]:
+    """Build morphological tessellation, queen-contiguity, and KNN graphs.
+
+    Returns (tessellation, contiguity, knn) — any may be None on failure.
+    Built from neighbourhood buildings so edge cells have complete graphs.
+    """
+    if buildings.empty:
+        return None, None, None
+
+    try:
+        limit = momepy.buffered_limit(buildings, buffer=5)
+        tessellation = momepy.morphological_tessellation(buildings, clip=limit)
+    except Exception:
+        return None, None, None
+
+    try:
+        contiguity = Graph.build_contiguity(tessellation, rook=False)
+    except Exception:
+        contiguity = None
+
+    try:
+        knn = Graph.build_knn(buildings.centroid, k=min(15, len(buildings)))
+    except Exception:
+        knn = None
+
+    return tessellation, contiguity, knn
+
+
+def _add_oneway_to_highways(highways: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Add a boolean ``oneway`` column to a prepared highways GeoDataFrame."""
+    highways = highways.copy()
+    has_tags = "tags" in highways.columns
+    has_highway = "highway" in highways.columns
+    oneway = []
+    for i in range(len(highways)):
+        tags = highways["tags"].iloc[i] if has_tags else None
+        hw = highways["highway"].iloc[i] if has_highway else None
+        if hw is None and tags and isinstance(tags, dict):
+            hw = tags.get("highway")
+        oneway.append(_parse_oneway(tags, hw))
+    highways["oneway"] = oneway
+    return highways
+
+
+def _build_street_graph(
+    highways: gpd.GeoDataFrame,
+    directed: bool = False,
+) -> nx.MultiGraph | nx.MultiDiGraph | None:
+    """Build a NetworkX street graph from prepared (equidistant) highways.
+
+    Args:
+        highways: Projected highways GeoDataFrame (equidistant CRS).
+        directed: If True, build a directed graph (vehicle network with oneway).
+
+    Returns:
+        NetworkX graph, or None if the graph cannot be built.
+    """
+    if highways.empty or len(highways) < 2:
+        return None
+    try:
+        cleaned = momepy.remove_false_nodes(highways)
+        if cleaned.empty:
+            return None
+        if directed:
+            cleaned = _add_oneway_to_highways(cleaned)
+            G = momepy.gdf_to_nx(
+                cleaned, length="mm_len", directed=True, oneway_column="oneway"
+            )
+        else:
+            G = momepy.gdf_to_nx(cleaned, length="mm_len", directed=False)
+        if G.number_of_edges() == 0:
+            return None
+        return G
+    except Exception as e:
+        logger.debug("Street graph creation failed: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# CellContext — shared pre-computed data for a single cell
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CellContext:
+    """Pre-computed data for a single cell, shared across all metrics.
+
+    Contains focal data (buildings/highways within the cell boundary) and
+    neighbourhood data (focal + surrounding cells). Shared spatial graphs are
+    computed lazily on first access and cached for reuse across metrics.
+
+    Construct via :func:`build_cell_context` rather than directly.
+
+    Attributes:
+        focal_buildings: Buildings in the focal cell projected to three CRSes.
+        focal_highways: All highways in the focal cell projected to two CRSes.
+        neighbourhood_buildings: Buildings in focal + neighbouring cells.
+        neighbourhood_highways: All highways in focal + neighbouring cells.
+        focal_vehicles: Vehicle network in the focal cell.
+        focal_pedestrians: Pedestrian network in the focal cell.
+        neighbourhood_vehicles: Vehicle network in focal + neighbouring cells.
+        neighbourhood_pedestrians: Pedestrian network in focal + neighbouring cells.
+    """
+
+    focal_buildings: PreparedBuildings
+    focal_highways: PreparedHighways
+    neighbourhood_buildings: PreparedBuildings
+    neighbourhood_highways: PreparedHighways
+    focal_vehicles: PreparedHighways
+    focal_pedestrians: PreparedHighways
+    neighbourhood_vehicles: PreparedHighways
+    neighbourhood_pedestrians: PreparedHighways
+
+    # --- optional debug export ---
+    cell_id: str = ""
+    dump_dir: Path | None = None
+
+    # --- lazy-cache backing fields (excluded from constructor and repr) ---
+    _building_graphs_computed: bool = field(default=False, init=False, repr=False)
+    _tessellation: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
+    _contiguity: Graph | None = field(default=None, init=False, repr=False)
+    _knn: Graph | None = field(default=None, init=False, repr=False)
+    _vehicle_graph_computed: bool = field(default=False, init=False, repr=False)
+    _vehicle_graph: nx.MultiDiGraph | None = field(default=None, init=False, repr=False)
+    _pedestrian_graph_computed: bool = field(default=False, init=False, repr=False)
+    _pedestrian_graph: nx.MultiGraph | None = field(default=None, init=False, repr=False)
+
+    def dump(self, name: str, gdf: gpd.GeoDataFrame) -> None:
+        """Write a GeoDataFrame to {dump_dir}/{name}_{cell_id}.gpkg if dump_dir is set."""
+        if self.dump_dir is None or gdf is None or gdf.empty:
+            return
+        dump_dir = Path(self.dump_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        safe_id = str(self.cell_id).replace("/", "_").replace(":", "_")
+        filename = f"{name}_{safe_id}.gpkg" if safe_id else f"{name}.gpkg"
+        path = dump_dir / filename
+        try:
+            gdf.to_file(path, driver="GPKG")
+            logger.debug("Dumped %s to %s", name, path)
+        except Exception as e:
+            logger.warning("Failed to dump %s: %s", name, e)
+
+    def _ensure_building_graphs(self) -> None:
+        if not self._building_graphs_computed:
+            self._tessellation, self._contiguity, self._knn = (
+                _build_tessellation_graphs(self.neighbourhood_buildings.equidistant)
+            )
+            self._building_graphs_computed = True
+            if self._tessellation is not None and self.dump_dir is not None:
+                self.dump("tessellation", self._tessellation)
+
+    @property
+    def tessellation(self) -> gpd.GeoDataFrame | None:
+        """Morphological tessellation built from neighbourhood buildings."""
+        self._ensure_building_graphs()
+        return self._tessellation
+
+    @property
+    def contiguity(self) -> Graph | None:
+        """Queen-adjacency graph of tessellation cells (neighbourhood scope)."""
+        self._ensure_building_graphs()
+        return self._contiguity
+
+    @property
+    def knn(self) -> Graph | None:
+        """K-nearest-neighbours graph (k≤15) of building centroids (neighbourhood scope)."""
+        self._ensure_building_graphs()
+        return self._knn
+
+    @property
+    def vehicle_graph(self) -> nx.MultiDiGraph | None:
+        """Directed NetworkX graph of the neighbourhood vehicle network."""
+        if not self._vehicle_graph_computed:
+            self._vehicle_graph = _build_street_graph(
+                self.neighbourhood_vehicles.equidistant, directed=True
+            )
+            self._vehicle_graph_computed = True
+        return self._vehicle_graph
+
+    @property
+    def pedestrian_graph(self) -> nx.MultiGraph | None:
+        """Undirected NetworkX graph of the neighbourhood pedestrian network."""
+        if not self._pedestrian_graph_computed:
+            self._pedestrian_graph = _build_street_graph(
+                self.neighbourhood_pedestrians.equidistant, directed=False
+            )
+            self._pedestrian_graph_computed = True
+        return self._pedestrian_graph
+
+
+def build_cell_context(
+    focal_buildings_gdf: gpd.GeoDataFrame,
+    focal_highways_gdf: gpd.GeoDataFrame,
+    focal_vehicles_gdf: gpd.GeoDataFrame,
+    focal_pedestrians_gdf: gpd.GeoDataFrame,
+    neighbourhood_buildings_gdf: gpd.GeoDataFrame,
+    neighbourhood_highways_gdf: gpd.GeoDataFrame,
+    neighbourhood_vehicles_gdf: gpd.GeoDataFrame,
+    neighbourhood_pedestrians_gdf: gpd.GeoDataFrame,
+    cell_polygon: Polygon,
+    equal_area_crs: CRS | str | int | None = None,
+    equidistant_crs: CRS | str | int | None = None,
+    conformal_crs: CRS | str | int | None = None,
+    cell_id: str = "",
+    dump_dir: Path | None = None,
+) -> CellContext:
+    """Construct a CellContext by projecting all input GeoDataFrames.
+
+    Calls :func:`prepare_buildings` twice (focal + neighbourhood) and
+    :func:`prepare_highways` six times (focal/neighbourhood × highways/vehicles/
+    pedestrians), then returns a :class:`CellContext` whose shared graphs are
+    computed lazily on first access and cached for reuse.
+
+    Args:
+        focal_buildings_gdf: Buildings within the focal cell (WGS84).
+        focal_highways_gdf: All highways within the focal cell (WGS84).
+        focal_vehicles_gdf: Vehicle network within the focal cell (WGS84).
+        focal_pedestrians_gdf: Pedestrian network within the focal cell (WGS84).
+        neighbourhood_buildings_gdf: Buildings in focal + adjacent cells (WGS84).
+        neighbourhood_highways_gdf: All highways in focal + adjacent cells (WGS84).
+        neighbourhood_vehicles_gdf: Vehicle network in focal + adjacent cells (WGS84).
+        neighbourhood_pedestrians_gdf: Pedestrian network in focal + adjacent cells (WGS84).
+        cell_polygon: The focal cell polygon (WGS84).
+        equal_area_crs: Override CRS for area calculations. Defaults to estimated UTM.
+        equidistant_crs: Override CRS for distance calculations. Defaults to estimated UTM.
+        conformal_crs: Override CRS for angular calculations. Defaults to estimated UTM.
+
+    Returns:
+        :class:`CellContext` ready for metric computation.
+    """
+    crs_kw = dict(
+        equal_area_crs=equal_area_crs,
+        equidistant_crs=equidistant_crs,
+        conformal_crs=conformal_crs,
+    )
+    hw_crs_kw = dict(
+        equidistant_crs=equidistant_crs,
+        conformal_crs=conformal_crs,
+    )
+    ctx = CellContext(
+        focal_buildings=prepare_buildings(focal_buildings_gdf, cell_polygon, **crs_kw),
+        focal_highways=prepare_highways(focal_highways_gdf, cell_polygon, **hw_crs_kw),
+        neighbourhood_buildings=prepare_buildings(neighbourhood_buildings_gdf, cell_polygon, **crs_kw),
+        neighbourhood_highways=prepare_highways(neighbourhood_highways_gdf, cell_polygon, **hw_crs_kw),
+        focal_vehicles=prepare_highways(focal_vehicles_gdf, cell_polygon, **hw_crs_kw),
+        focal_pedestrians=prepare_highways(focal_pedestrians_gdf, cell_polygon, **hw_crs_kw),
+        neighbourhood_vehicles=prepare_highways(neighbourhood_vehicles_gdf, cell_polygon, **hw_crs_kw),
+        neighbourhood_pedestrians=prepare_highways(neighbourhood_pedestrians_gdf, cell_polygon, **hw_crs_kw),
+        cell_id=cell_id,
+        dump_dir=dump_dir,
+    )
+    if dump_dir is not None:
+        ctx.dump("focal_buildings", ctx.focal_buildings.equidistant)
+        ctx.dump("neighbourhood_buildings", ctx.neighbourhood_buildings.equidistant)
+        ctx.dump("focal_highways", ctx.focal_highways.equidistant)
+        ctx.dump("neighbourhood_highways", ctx.neighbourhood_highways.equidistant)
+    return ctx

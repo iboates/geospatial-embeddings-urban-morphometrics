@@ -2,21 +2,14 @@
 
 import geopandas as gpd
 import momepy
-from pyproj import CRS
-from shapely.geometry import Polygon
 import pandas as pd
 import numpy as np
+from shapely.geometry import Polygon
 
-from ._utils import PreparedBuildings, aggregate_stats, prepare_buildings
+from ._utils import CellContext, aggregate_stats
 
 
-def courtyard_area_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def courtyard_area_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute courtyard area metrics for buildings in the cell.
 
     Adjacent buildings are first dissolved into unified structures so that
@@ -28,14 +21,10 @@ def courtyard_area_metrics(
 
     Uses equal-area CRS for accurate area computation.
     """
-    
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equal_area.empty:
-        return prepared.cell_gdf
-
-    buildings = prepared.equal_area
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.equal_area
+    if buildings.empty:
+        return cell_gdf
 
     # Dissolve adjacent (touching/overlapping) buildings into unified structures
     dissolved = buildings.union_all()
@@ -53,25 +42,24 @@ def courtyard_area_metrics(
             courtyard_areas.append(courtyard_poly.area)
 
     courtyard_count = len(courtyard_areas)
-    prepared.cell_gdf["courtyard_area_count"] = courtyard_count
+    cell_gdf["courtyard_area_count"] = courtyard_count
 
     if courtyard_count > 0:
         s = pd.Series(courtyard_areas)
         stats = aggregate_stats(s, prefix="courtyard_area", include_sum=True)
         for k, v in stats.items():
-            prepared.cell_gdf[k] = v
+            cell_gdf[k] = v
 
-    return prepared.cell_gdf
+    if ctx.dump_dir is not None and courtyard_count > 0:
+        courtyard_polys = [Polygon(i) for g in structures for i in g.interiors]
+        ctx.dump("courtyard_area", gpd.GeoDataFrame(
+            {"area": courtyard_areas}, geometry=courtyard_polys, crs=buildings.crs
+        ))
+
+    return cell_gdf
 
 
-def floor_area_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-    floor_height: float = 3.0,
-) -> gpd.GeoDataFrame:
+def floor_area_metrics(ctx: CellContext, floor_height: float = 3.0) -> gpd.GeoDataFrame:
     """Compute floor area metrics for buildings in the cell.
 
     Floor area = footprint area x number of levels.
@@ -84,13 +72,10 @@ def floor_area_metrics(
 
     Uses equal-area CRS for accurate area computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equal_area.empty:
-        return prepared.cell_gdf
-
-    buildings = prepared.equal_area
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.equal_area
+    if buildings.empty:
+        return cell_gdf
 
     # Determine number of levels per building
     if "building_levels" in buildings.columns:
@@ -107,67 +92,63 @@ def floor_area_metrics(
     s = buildings["area"] * levels
     stats = aggregate_stats(s, prefix="floor_area", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = buildings[["geometry"]].copy()
+        _d["floor_area"] = s
+        ctx.dump("floor_area", _d)
+    return cell_gdf
 
 
-def longest_axis_length_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def longest_axis_length_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute longest axis length metrics for buildings in the cell.
 
     The longest axis is the diameter of the minimum bounding circle.
     Uses equidistant CRS for accurate distance computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    s = momepy.longest_axis_length(prepared.equidistant)
+    s = momepy.longest_axis_length(buildings)
     stats = aggregate_stats(s, prefix="longest_axis_length", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = buildings[["geometry"]].copy()
+        _d["longest_axis_length"] = s
+        ctx.dump("longest_axis_length", _d)
+    return cell_gdf
 
 
-def perimeter_wall_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def perimeter_wall_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute perimeter wall length metrics for buildings in the cell. Returns the perimeter of the JOINED STRUCTURES, i.e. all buildings which are touching
+
+    Neighbourhood-aware: uses neighbourhood buildings to correctly compute shared
+    walls at cell boundaries, then filters aggregation to focal buildings.
 
     Uses equidistant CRS for accurate perimeter/length computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    s = momepy.perimeter_wall(prepared.equidistant)
-    stats = aggregate_stats(s, prefix="perimeter_wall", include_sum=True)
+    s = momepy.perimeter_wall(buildings)
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="perimeter_wall", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["perimeter_wall"] = s_focal
+        ctx.dump("perimeter_wall", _d)
+    return cell_gdf
 
 
-def volume_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-    floor_height: float = 3.0,
-) -> gpd.GeoDataFrame:
+def volume_metrics(ctx: CellContext, floor_height: float = 3.0) -> gpd.GeoDataFrame:
     """Compute volume metrics for buildings in the cell.
 
     Volume = footprint area x building height.
@@ -181,14 +162,10 @@ def volume_metrics(
 
     Uses equal-area CRS for accurate area computation.
     """
-
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equal_area.empty:
-        return prepared.cell_gdf
-
-    buildings = prepared.equal_area
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.equal_area
+    if buildings.empty:
+        return cell_gdf
 
     # Resolve height: prefer parsed height, then levels * floor_height, then default
     height = buildings["height"].copy()
@@ -201,5 +178,9 @@ def volume_metrics(
     s = buildings["area"] * height
     stats = aggregate_stats(s, prefix="volume", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = buildings[["geometry"]].copy()
+        _d["volume"] = s
+        ctx.dump("volume", _d)
+    return cell_gdf

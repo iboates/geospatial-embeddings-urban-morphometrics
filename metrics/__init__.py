@@ -1,9 +1,11 @@
 """Building morphology metrics computed from OSM data using momepy."""
 
 from ._utils import (
+    CellContext,
     PreparedBuildings,
     PreparedHighways,
     aggregate_stats,
+    build_cell_context,
     prepare_buildings,
     prepare_highways,
 )
@@ -51,9 +53,11 @@ from .street_relationship import (
 
 __all__ = [
     "compute_all_metrics",
+    "CellContext",
     "PreparedBuildings",
     "PreparedHighways",
     "aggregate_stats",
+    "build_cell_context",
     "prepare_buildings",
     "prepare_highways",
     "courtyard_area_metrics",

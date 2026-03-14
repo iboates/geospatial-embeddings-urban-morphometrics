@@ -3,317 +3,293 @@
 import geopandas as gpd
 import momepy
 from libpysal.graph import Graph
-from pyproj import CRS
-from shapely.geometry import Polygon
 
-from ._utils import aggregate_stats, prepare_buildings, prepare_highways
+from ._utils import CellContext, aggregate_stats
 
 
-def _build_graphs(buildings: gpd.GeoDataFrame):
-    """Build tessellation, contiguity, and neighborhood graphs for distribution metrics."""
-    try:
-        limit = momepy.buffered_limit(buildings, buffer=5)
-        tessellation = momepy.morphological_tessellation(buildings, clip=limit)
-    except Exception:
-        return None, None, None
-
-    try:
-        contiguity = Graph.build_contiguity(tessellation, rook=False)
-    except Exception:
-        contiguity = None
-
-    try:
-        knn = Graph.build_knn(buildings.centroid, k=min(15, len(buildings)))
-    except Exception:
-        knn = None
-
-    return tessellation, contiguity, knn
-
-
-def orientation_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def orientation_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute building orientation (deviation from cardinal directions).
 
     Uses conformal CRS for accurate angle computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.conformal.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    buildings = ctx.focal_buildings.conformal
+    if buildings.empty:
+        return cell_gdf
 
-    s = momepy.orientation(prepared.conformal)
+    s = momepy.orientation(buildings)
     stats = aggregate_stats(s, prefix="orientation")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        ctx.dump("orientation", buildings[["geometry"]].assign(orientation=s))
+    return cell_gdf
 
 
-def shared_walls_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def shared_walls_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute shared wall length between adjacent buildings.
 
     Returns two sets of metrics:
     - shared_walls_*: absolute shared wall length.
     - shared_walls_ratio_*: shared wall length as ratio of building perimeter.
 
+    Neighbourhood-aware: uses neighbourhood buildings to correctly compute shared
+    walls at cell boundaries, then filters aggregation to focal buildings.
+
     Uses equidistant CRS for accurate length computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
-
-    buildings = prepared.equidistant
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
     # Absolute shared wall length
     s = momepy.shared_walls(buildings)
     s.name = "shared_walls"
-    stats = aggregate_stats(s, prefix="shared_walls", include_sum=True)
+    s_focal = s[s.index.isin(focal_idx)]
+
+    stats = aggregate_stats(s_focal, prefix="shared_walls", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
+        cell_gdf[k] = v
 
     # Shared wall length as ratio of building perimeter
     perimeter = buildings.geometry.length
     ratio = s / perimeter
-    stats_ratio = aggregate_stats(ratio, prefix="shared_walls_ratio", include_sum=True)
+    ratio_focal = ratio[ratio.index.isin(focal_idx)]
+    stats_ratio = aggregate_stats(ratio_focal, prefix="shared_walls_ratio", include_sum=True)
     for k, v in stats_ratio.items():
-        prepared.cell_gdf[k] = v
+        cell_gdf[k] = v
 
-    return prepared.cell_gdf
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["shared_walls"] = s_focal
+        _d["shared_walls_ratio"] = ratio_focal
+        ctx.dump("shared_walls", _d)
+
+    return cell_gdf
 
 
-def alignment_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def alignment_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute alignment (orientation consistency among neighbors).
+
+    Neighbourhood-aware: uses neighbourhood buildings and ctx.knn graph,
+    then filters aggregation to focal buildings.
 
     Uses conformal CRS for accurate angle computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.conformal.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.conformal.index
+    buildings = ctx.neighbourhood_buildings.conformal
+    if buildings.empty:
+        return cell_gdf
 
-    buildings = prepared.conformal
-    tessellation, contiguity, knn = _build_graphs(buildings)
+    knn = ctx.knn
     if knn is None:
-        return prepared.cell_gdf
+        return cell_gdf
 
     orientation = momepy.orientation(buildings)
     knn_aligned = knn.assign_self_weight()
     s = momepy.alignment(orientation, knn_aligned)
-    stats = aggregate_stats(s, prefix="alignment")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="alignment")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.conformal[["geometry"]].copy()
+        _d["alignment"] = s_focal
+        ctx.dump("alignment", _d)
+    return cell_gdf
 
 
-def neighbor_distance_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def neighbor_distance_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute mean distance to adjacent buildings.
+
+    Neighbourhood-aware: builds triangulation from neighbourhood buildings,
+    then filters aggregation to focal buildings.
 
     Uses equidistant CRS for accurate distance computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    buildings = prepared.equidistant
     try:
         tri = Graph.build_triangulation(buildings.centroid)
     except Exception:
-        return prepared.cell_gdf
+        return cell_gdf
 
     s = momepy.neighbor_distance(buildings, tri)
     s.name = "neighbor_distance"
-    stats = aggregate_stats(s.dropna(), prefix="neighbor_distance")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal.dropna(), prefix="neighbor_distance")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["neighbor_distance"] = s_focal
+        ctx.dump("neighbor_distance", _d)
+    return cell_gdf
 
 
-def mean_interbuilding_distance_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def mean_interbuilding_distance_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute mean interbuilding distance.
+
+    Neighbourhood-aware: builds triangulation from neighbourhood buildings and
+    uses ctx.knn, then filters aggregation to focal buildings.
 
     Uses equidistant CRS for accurate distance computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    buildings = prepared.equidistant
+    knn = ctx.knn
+    if knn is None:
+        return cell_gdf
+
     try:
         tri = Graph.build_triangulation(buildings.centroid)
-        knn = Graph.build_knn(buildings.centroid, k=min(15, len(buildings)))
     except Exception:
-        return prepared.cell_gdf
+        return cell_gdf
 
     s = momepy.mean_interbuilding_distance(buildings, tri, knn)
-    stats = aggregate_stats(s, prefix="mean_interbuilding_distance")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="mean_interbuilding_distance")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["mean_interbuilding_distance"] = s_focal
+        ctx.dump("mean_interbuilding_distance", _d)
+    return cell_gdf
 
 
-def building_adjacency_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def building_adjacency_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute building adjacency (ratio of joined structures).
+
+    Neighbourhood-aware: uses neighbourhood buildings and ctx.knn,
+    then filters aggregation to focal buildings.
 
     Primarily topological. Uses equidistant CRS.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
+    buildings = ctx.neighbourhood_buildings.equidistant
+    if buildings.empty:
+        return cell_gdf
 
-    buildings = prepared.equidistant
-    tessellation, contiguity, knn = _build_graphs(buildings)
-    if contiguity is None or knn is None:
-        return prepared.cell_gdf
+    knn = ctx.knn
+    if knn is None:
+        return cell_gdf
 
     try:
         building_contig = Graph.build_contiguity(buildings, rook=True)
     except Exception:
-        return prepared.cell_gdf
+        return cell_gdf
 
     s = momepy.building_adjacency(building_contig, knn.assign_self_weight())
-    stats = aggregate_stats(s, prefix="building_adjacency")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="building_adjacency")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.equidistant[["geometry"]].copy()
+        _d["building_adjacency"] = s_focal
+        ctx.dump("building_adjacency", _d)
+    return cell_gdf
 
 
-def neighbors_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def neighbors_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute number of tessellation neighbors.
+
+    Neighbourhood-aware: uses ctx.tessellation and ctx.contiguity (both built
+    from neighbourhood buildings), then filters aggregation to focal buildings.
 
     Primarily topological. Uses equidistant CRS.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.equidistant.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.equidistant.index
 
-    buildings = prepared.equidistant
-    tessellation, contiguity, _ = _build_graphs(buildings)
+    tessellation = ctx.tessellation
+    contiguity = ctx.contiguity
     if tessellation is None or contiguity is None:
-        return prepared.cell_gdf
+        return cell_gdf
 
     s = momepy.neighbors(tessellation, contiguity)
-    stats = aggregate_stats(s, prefix="neighbors", include_sum=True)
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="neighbors", include_sum=True)
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        tess_focal = tessellation[tessellation.index.isin(focal_idx)]
+        ctx.dump("neighbors", tess_focal[["geometry"]].assign(neighbors=s_focal))
+    return cell_gdf
 
 
-def street_alignment_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    highways_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def street_alignment_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute street alignment (building vs. street orientation).
+
+    Neighbourhood-aware: uses neighbourhood buildings and highways (conformal),
+    then filters aggregation to focal buildings.
 
     Uses conformal CRS for accurate angle computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    highways_prep = prepare_highways(
-        highways_gdf, cell_polygon, equidistant_crs, conformal_crs
-    )
-    if prepared.conformal.empty or highways_prep.conformal.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.conformal.index
+    buildings = ctx.neighbourhood_buildings.conformal
+    highways = ctx.neighbourhood_highways.conformal
 
-    buildings = prepared.conformal
-    highways = highways_prep.conformal
+    if buildings.empty or highways.empty:
+        return cell_gdf
 
     street_idx = momepy.get_nearest_street(buildings, highways, max_distance=500)
     valid = street_idx.notna()
     if not valid.any():
-        return prepared.cell_gdf
+        return cell_gdf
 
     blg_orient = momepy.orientation(buildings)
     str_orient = momepy.orientation(highways)
     s = momepy.street_alignment(blg_orient, str_orient, street_idx)
-    stats = aggregate_stats(s.dropna(), prefix="street_alignment")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal.dropna(), prefix="street_alignment")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        _d = ctx.focal_buildings.conformal[["geometry"]].copy()
+        _d["street_alignment"] = s_focal
+        ctx.dump("street_alignment", _d)
+    return cell_gdf
 
 
-def cell_alignment_metrics(
-    buildings_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equal_area_crs: CRS | str | int | None = None,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
+def cell_alignment_metrics(ctx: CellContext) -> gpd.GeoDataFrame:
     """Compute cell alignment (building vs. tessellation cell orientation).
+
+    Neighbourhood-aware: uses ctx.tessellation (built from neighbourhood buildings)
+    and neighbourhood buildings conformal orientation, then filters to focal buildings.
 
     Uses conformal CRS for accurate angle computation.
     """
-    prepared = prepare_buildings(
-        buildings_gdf, cell_polygon, equal_area_crs, equidistant_crs, conformal_crs
-    )
-    if prepared.conformal.empty:
-        return prepared.cell_gdf
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_idx = ctx.focal_buildings.conformal.index
+    buildings = ctx.neighbourhood_buildings.conformal
 
-    buildings = prepared.conformal
-    tessellation, contiguity, _ = _build_graphs(buildings)
-    if tessellation is None:
-        return prepared.cell_gdf
+    tessellation = ctx.tessellation
+    if tessellation is None or buildings.empty:
+        return cell_gdf
 
     blg_orient = momepy.orientation(buildings)
     tess_orient = momepy.orientation(tessellation)
     s = momepy.cell_alignment(tess_orient, blg_orient)
-    stats = aggregate_stats(s, prefix="cell_alignment")
+    s_focal = s[s.index.isin(focal_idx)]
+    stats = aggregate_stats(s_focal, prefix="cell_alignment")
     for k, v in stats.items():
-        prepared.cell_gdf[k] = v
-    return prepared.cell_gdf
+        cell_gdf[k] = v
+    if ctx.dump_dir is not None:
+        tess_focal = tessellation[tessellation.index.isin(focal_idx)]
+        ctx.dump("cell_alignment", tess_focal[["geometry"]].assign(cell_alignment=s_focal))
+    return cell_gdf

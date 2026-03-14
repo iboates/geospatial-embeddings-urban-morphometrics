@@ -6,10 +6,8 @@ import geopandas as gpd
 import momepy
 import networkx as nx
 import numpy as np
-from pyproj import CRS
-from shapely.geometry import Polygon
 
-from ._utils import _parse_oneway, aggregate_stats, prepare_highways
+from ._utils import CellContext, _parse_oneway, aggregate_stats
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +75,12 @@ def _to_graph(
         return None
 
 
-def _compute_node_metrics(G: nx.MultiGraph, mode: str) -> dict[str, float]:
-    """Compute connectivity metrics and aggregate per-node values.
+def _compute_node_metrics(G: nx.MultiGraph, mode: str, focal_polygon) -> dict[str, float]:
+    """Compute connectivity metrics and aggregate per-node values for nodes within focal polygon.
 
     mode: "vehicle" or "pedestrian"; keys become degree_vehicle_mean, meshedness_pedestrian_mean, etc.
+    focal_polygon: Shapely polygon used to filter nodes for aggregation (neighbourhood graph,
+    focal stats).
     """
     out = {}
     if G.number_of_nodes() == 0:
@@ -114,12 +114,17 @@ def _compute_node_metrics(G: nx.MultiGraph, mode: str) -> dict[str, float]:
     if nodes.empty:
         return out
 
+    # Filter to focal polygon nodes for aggregation
+    focal_nodes = nodes[nodes.geometry.within(focal_polygon)]
+    if focal_nodes.empty:
+        return out
+
     for attr in NODE_METRICS:
-        if attr not in nodes.columns:
+        if attr not in focal_nodes.columns:
             continue
         try:
             stats = aggregate_stats(
-                nodes[attr],
+                focal_nodes[attr],
                 prefix=f"{attr}_{mode}",
                 include_median=True,
                 include_sum=(attr == "degree"),
@@ -129,6 +134,7 @@ def _compute_node_metrics(G: nx.MultiGraph, mode: str) -> dict[str, float]:
         except Exception as e:
             logger.debug("Aggregation for %s failed: %s", attr, e)
 
+    # Graph-level metrics use the full graph G (not per-node, no focal filtering needed)
     for name in GRAPH_METRICS:
         fn = {
             "meshedness_global": lambda: momepy.meshedness(G, radius=None),
@@ -141,6 +147,7 @@ def _compute_node_metrics(G: nx.MultiGraph, mode: str) -> dict[str, float]:
                 out[f"{name}_{mode}"] = float(val)
         except Exception:
             pass
+
     try:
         prop = momepy.proportion(
             G, radius=None, three="three", four="four", dead="dead", verbose=False
@@ -154,71 +161,24 @@ def _compute_node_metrics(G: nx.MultiGraph, mode: str) -> dict[str, float]:
     return out
 
 
-def connectivity_metrics(
-    network_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    mode: str,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> gpd.GeoDataFrame:
-    """Compute street connectivity metrics for a pre-filtered network.
-
-    Uses equidistant CRS for accurate edge lengths and distances.
-    """
-    highways_prep = prepare_highways(
-        network_gdf, cell_polygon, equidistant_crs, conformal_crs
-    )
-    highways = highways_prep.equidistant
-
-    cell_gdf = gpd.GeoDataFrame(
-        [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
-    )
-    if highways.empty:
-        return cell_gdf
-
-    if highways.crs is not None:
-        cell_gdf = cell_gdf.to_crs(highways.crs)
-
-    # Vehicle network: directed graph with oneway handling (directionality matters)
-    directed = mode == "vehicle"
-    oneway_col = None
-    if directed:
-        highways = _add_oneway_column(highways)
-        oneway_col = "oneway"
-
-    G = _to_graph(highways, directed=directed, oneway_column=oneway_col)
-    if G is None:
-        return cell_gdf
-
-    stats = _compute_node_metrics(G, mode=mode)
-    return cell_gdf.assign(**stats)
-
-
-def compute_connectivity_metrics_by_name(
-    vehicles_gdf: gpd.GeoDataFrame,
-    pedestrians_gdf: gpd.GeoDataFrame,
-    cell_polygon: Polygon,
-    equidistant_crs: CRS | str | int | None = None,
-    conformal_crs: CRS | str | int | None = None,
-) -> dict[str, gpd.GeoDataFrame]:
+def compute_connectivity_metrics_by_name(ctx: CellContext) -> dict[str, gpd.GeoDataFrame]:
     """Compute connectivity metrics for vehicle and pedestrian networks.
+
+    Uses ctx.vehicle_graph and ctx.pedestrian_graph (neighbourhood scope) and
+    filters node-level aggregations to nodes within the focal cell polygon.
 
     Returns one GeoDataFrame per metric-mode combo (e.g. meshedness_vehicle,
     meshedness_pedestrian, degree_vehicle, degree_pedestrian). All top-level keys.
     """
-    cell_gdf = gpd.GeoDataFrame(
-        [cell_polygon], columns=["geometry"], geometry="geometry", crs=4326
-    )
+    cell_gdf = ctx.focal_buildings.cell_gdf.copy()
+    focal_polygon = cell_gdf.geometry.iloc[0]
     all_stats: dict[str, float] = {}
 
-    for mode, gdf in [("vehicle", vehicles_gdf), ("pedestrian", pedestrians_gdf)]:
-        result = connectivity_metrics(
-            gdf, cell_polygon, mode=mode,
-            equidistant_crs=equidistant_crs, conformal_crs=conformal_crs,
-        )
-        for col in result.columns:
-            if col != "geometry":
-                all_stats[col] = result[col].iloc[0]
+    for mode, graph in [("vehicle", ctx.vehicle_graph), ("pedestrian", ctx.pedestrian_graph)]:
+        if graph is None:
+            continue
+        stats = _compute_node_metrics(graph, mode=mode, focal_polygon=focal_polygon)
+        all_stats.update(stats)
 
     # Group by metric_mode (e.g. degree_vehicle, meshedness_pedestrian) - each gets its own key
     # col format: {metric}_{mode} or {metric}_{mode}_{stat}

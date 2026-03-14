@@ -13,6 +13,7 @@ from pyproj import CRS
 from shapely.geometry import Polygon
 
 from metrics import compute_all_metrics
+from metrics._utils import build_cell_context
 from metrics.compute import ALL_METRIC_NAMES
 from metrics.street_networks import split_highways
 
@@ -275,6 +276,29 @@ def _select_for_region(gdf: gpd.GeoDataFrame, region_id: str) -> gpd.GeoDataFram
     return selected.drop(columns=region_cols)
 
 
+def _select_with_neighbours(
+    gdf: gpd.GeoDataFrame,
+    region_id: str,
+    region_ids: list[str],
+) -> gpd.GeoDataFrame:
+    """Select features that intersect the given region or any of its H3 ring-1 neighbours.
+
+    Returns a clean GeoDataFrame with all boolean region columns dropped.
+    """
+    if gdf.empty:
+        return gdf
+    import h3
+    neighbours = set(h3.grid_ring(region_id, 1))
+    all_ids = ({region_id} | neighbours) & set(region_ids)
+    mask = pd.Series(False, index=gdf.index)
+    for rid in all_ids:
+        if rid in gdf.columns:
+            mask = mask | gdf[rid]
+    selected = gdf[mask].copy()
+    bool_cols = [c for c in gdf.columns if gdf[c].dtype == "bool"]
+    return selected.drop(columns=[c for c in bool_cols if c in selected.columns])
+
+
 def compute_urban_morphometrics(
     polygons_gdf: gpd.GeoDataFrame,
     pbf_url: str,
@@ -283,6 +307,7 @@ def compute_urban_morphometrics(
     equal_area_crs: CRS | str | int | None = None,
     equidistant_crs: CRS | str | int | None = None,
     conformal_crs: CRS | str | int | None = None,
+    dump_dir: str | Path | None = None,
 ) -> gpd.GeoDataFrame:
     """Extract OSM data and compute building morphology metrics for each polygon.
 
@@ -307,6 +332,9 @@ def compute_urban_morphometrics(
         equidistant_crs: CRS for distance/length calculations. Defaults to
             estimated UTM.
         conformal_crs: CRS for angular calculations. Defaults to estimated UTM.
+        dump_dir: If provided, each cell's intermediate per-building data and
+            the final aggregated result are written to GeoPackage files in this
+            directory. Files are named ``{layer}_{cell_id}.gpkg``.
 
     Returns:
         GeoDataFrame with one row per input polygon and all metric columns.
@@ -353,24 +381,27 @@ def compute_urban_morphometrics(
     for i, (region_id, polygon) in enumerate(polys_iter):
         print(f"Computing metrics for {region_id} ({i + 1}/{total})...")
 
-        buildings_gdf = _select_for_region(buildings_all, region_id)
-        highways_gdf = _select_for_region(highways_all, region_id)
-        vehicles_gdf = _select_for_region(vehicles_all, region_id)
-        pedestrians_gdf = _select_for_region(pedestrians_all, region_id)
+        focal_b = _select_for_region(buildings_all, region_id)
+        focal_h = _select_for_region(highways_all, region_id)
+        focal_v = _select_for_region(vehicles_all, region_id)
+        focal_p = _select_for_region(pedestrians_all, region_id)
 
-        result = compute_all_metrics(
-            buildings_gdf,
-            highways_gdf,
-            vehicles_gdf,
-            pedestrians_gdf,
+        nbr_b = _select_with_neighbours(buildings_all, region_id, region_ids)
+        nbr_h = _select_with_neighbours(highways_all, region_id, region_ids)
+        nbr_v = _select_with_neighbours(vehicles_all, region_id, region_ids)
+        nbr_p = _select_with_neighbours(pedestrians_all, region_id, region_ids)
+
+        ctx = build_cell_context(
+            focal_b, focal_h, focal_v, focal_p,
+            nbr_b, nbr_h, nbr_v, nbr_p,
             polygon,
-            return_dict=False,
-            selected_metrics=selected_metrics,
-            quiet=True,
             equal_area_crs=equal_area_crs,
             equidistant_crs=equidistant_crs,
             conformal_crs=conformal_crs,
+            cell_id=str(region_id),
+            dump_dir=Path(dump_dir) if dump_dir is not None else None,
         )
+        result = compute_all_metrics(ctx, selected_metrics=selected_metrics, quiet=True)
 
         row = {}
         for col in result.columns:
