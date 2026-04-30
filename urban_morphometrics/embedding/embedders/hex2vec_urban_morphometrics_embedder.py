@@ -97,7 +97,10 @@ class UrbanMorphometricsHex2VecEmbedder(Hex2VecEmbedder):
             pd.DataFrame: Float32 combined feature matrix aligned on the region index.
         """
         # OSM count features — already float32 via the parent helper
-        counts_df = self._get_raw_counts(regions_gdf, features_gdf, joint_gdf)
+        if self.expected_output_features is not None:
+            counts_df = self._get_raw_counts(regions_gdf, features_gdf, joint_gdf)
+        else:
+            counts_df = pd.DataFrame(regions_gdf).drop(columns=[GEOMETRY_COLUMN])
 
         # Morphological features
         morpho_df = pd.DataFrame(morpho_features_gdf)
@@ -159,10 +162,10 @@ class UrbanMorphometricsHex2VecEmbedder(Hex2VecEmbedder):
             regions_gdf, features_gdf, joint_gdf, morpho_features_gdf
         )
 
-        # Mirror the parent's expected_output_features freeze, but across the full
-        # combined column set so save/load can reconstruct the input layer correctly.
-        if self.expected_output_features is None:
-            self.expected_output_features = pd.Series(combined_df.columns)
+        # # Mirror the parent's expected_output_features freeze, but across the full
+        # # combined column set so save/load can reconstruct the input layer correctly.
+        # if self.expected_output_features is None:
+        #     self.expected_output_features = pd.Series(combined_df.columns)
 
         num_features = len(combined_df.columns)
         self._model = Hex2VecModel(

@@ -67,7 +67,7 @@ def build_embedder(
 
     # ── Per-embedder construction ─────────────────────────────────────────────
     if name == "Hex2Vec":
-        embedder = cls(hidden_sizes)
+        embedder = cls(hidden_sizes, expected_output_features=osm_filter)
 
     elif name == "GeoVex":
         embedder = cls(
