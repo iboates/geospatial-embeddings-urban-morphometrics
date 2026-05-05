@@ -2,7 +2,7 @@
 # CountEmbedder and ContextualCountEmbedder do not require .fit() with OSM data
 # — they count OSM features per region directly.
 
-experiment_name: "count_embedder_king_county_r9"
+experiment_name: "count_embedder"
 
 embedder:
   name: "CountEmbedder"
@@ -10,9 +10,6 @@ embedder:
   hidden_sizes: []
   fit_kwargs: {}            # CountEmbedder.fit() is a no-op; kept for interface uniformity
 
-model:
-  linear_sizes: [100, 200, 300, 200, 100]
-  dropout_p: 0.2
 
 training:
   epochs: 50

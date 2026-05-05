@@ -57,22 +57,29 @@ logger = logging.getLogger(__name__)
 def run(config_path: str) -> dict:
     # ── Load config ──────────────────────────────────────────────────────────
     cfg = load_config(config_path)
-    exp_name: str = cfg["experiment_name"]
+
+    # ── Build experiment name ────────────────────────────────────────────────
+    ds_cfg = cfg["dataset"]
+    dataset_name = ds_cfg["name"]
+    resolution: int = cfg["resolution"]
+
+    cfg_sweep_name = cfg.get("sweep_name", "")
+    cfg_exp_name = cfg.get("experiment_name", "")
+    exp_name = f"{cfg_sweep_name}_{cfg_exp_name}_{dataset_name}_r{resolution}"
+
     logger.info("=== Experiment: %s ===", exp_name)
 
     output_dir = Path(cfg["output_dir"]) / exp_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Dataset ──────────────────────────────────────────────────────────────
-    ds_cfg = cfg["dataset"]
-    dataset = load_dataset(ds_cfg["name"], ds_cfg["version"])
+    dataset = load_dataset(dataset_name, ds_cfg["version"])
     train_gdf, dev_gdf = dataset.train_test_split(
         test_size=ds_cfg["dev_size"], validation_split=True
     )
     _, test_gdf = dataset.load(version=ds_cfg["version"]).values()
 
     # ── Regionalisation ──────────────────────────────────────────────────────
-    resolution: int = cfg["resolution"]
     regionalizer = H3Regionalizer(resolution=resolution)
 
     joined_train, regions_train = assign_h3_index(train_gdf, regionalizer)
@@ -196,7 +203,7 @@ def run(config_path: str) -> dict:
         EarlyStopping(monitor="val_loss", patience=5),
         ModelCheckpoint(
             dirpath=str(output_dir),
-            filename=f"{exp_name}_best_model.pt",
+            filename=f"{exp_name}_best_model",
             monitor="val_loss",
         ),
     ]

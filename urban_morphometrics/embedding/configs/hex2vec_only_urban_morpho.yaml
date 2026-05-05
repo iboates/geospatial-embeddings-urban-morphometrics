@@ -1,26 +1,17 @@
 # Experiment: Hex2Vec Morphometrics embedder on the House Sales in King County dataset
 # Inherits defaults from configs/base.yaml — only overrides are listed here.
 
-experiment_name: "hex2vec_morpho_king_county_r9"
+experiment_name: "hex2vec_only_urban_morpho"
 
-dataset:
-  name: "HouseSalesInKingCounty"
-  version: "9"
-  use_numerical_columns: false
-  aggregation: "average"
-  dev_size: 0.1
+osm_filter: "EMPTY"
 
 embedder:
   name: "Hex2VecUrbanMorphometrics"
   hidden_sizes: [150, 75, 50]
   fit_kwargs:
-    batch_size: 256
+    batch_size: 32
     trainer_kwargs:
       max_epochs: 10
-
-model:
-  linear_sizes: [50, 100, 50]
-  dropout_p: 0.2
 
 training:
   epochs: 50

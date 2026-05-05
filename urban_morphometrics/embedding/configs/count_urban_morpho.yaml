@@ -2,18 +2,14 @@
 # UrbanMorphometricsEmbedder do not require .fit() with OSM data
 # — they count OSM features and aggregate Urban Morphometrics per region directly.
 
-experiment_name: "urban_morpho_king_county_r9"
+experiment_name: "count_urban_morpho"
 
-resolution: 9
 
 embedder:
   name: "UrbanMorphometricsEmbedder"
   # UrbanMorphometricsEmbedder has no hidden_sizes — leave empty
   hidden_sizes: []
   fit_kwargs: {}            # UrbanMorphometricsEmbedder.fit() is a no-op; kept for interface uniformity
-
-model:
-  linear_sizes: [50, 100, 50]
 
 training:
   epochs: 50

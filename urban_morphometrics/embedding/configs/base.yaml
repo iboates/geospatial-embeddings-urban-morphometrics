@@ -1,6 +1,6 @@
 # Base configuration — values here are defaults that experiment configs can override.
 
-experiment_name: "base"
+sweep_name: "benchmark"
 output_dir: "results"
 
 # H3 resolution for regionalisation
@@ -26,7 +26,7 @@ embedder:
   name: "Hex2Vec"                  # registry key → see src/embedders/embedder_factory.py
   hidden_sizes: [150, 75, 50]      # Hex2Vec / GeoVex architecture
   fit_kwargs:                      # passed directly to embedder.fit()
-    batch_size: 256
+    batch_size: 32
     trainer_kwargs:
       max_epochs: 10
 

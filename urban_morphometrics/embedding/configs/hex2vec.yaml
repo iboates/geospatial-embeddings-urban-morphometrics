@@ -1,25 +1,15 @@
-# Experiment: Hex2Vec embedder on the AirBnB multicity dataset
+# Experiment: Hex2Vec embedder on the House Sales in King County dataset
 # Inherits defaults from configs/base.yaml — only overrides are listed here.
 
-experiment_name: "hex2vec_airbnb_r9"
-
-dataset:
-  name: "AirbnbMulticity"
-  version: "9"
-  use_numerical_columns: false
-  aggregation: "average"
-  dev_size: 0.1
+experiment_name: "hex2vec"
 
 embedder:
   name: "Hex2Vec"
   hidden_sizes: [150, 75, 50]
   fit_kwargs:
-    batch_size: 256
+    batch_size: 32
     trainer_kwargs:
       max_epochs: 10
-
-model:
-  linear_sizes: [50, 100, 50]
 
 training:
   epochs: 50
