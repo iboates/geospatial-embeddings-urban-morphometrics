@@ -16,7 +16,6 @@ neighbourhood_radius: 2
 # ── Dataset ──────────────────────────────────────────────────────────────────
 dataset:
   name: "HouseSalesInKingCounty"   # registry key → see src/data/dataset_factory.py
-  version: "9"                     # passed as `version` to dataset.load()
   use_numerical_columns: false     # if true, numerical cols are scaled and concatenated
   aggregation: "average"          # "average" | "count" — how to aggregate target + numerical cols per hex
   dev_size: 0.1                    # fraction of train used as dev split
@@ -41,4 +40,4 @@ training:
   batch_size: 32
   learning_rate: 0.001
   early_stopping_patience: 5
-  loss: "MAE"                 # "SmoothL1" | "MSE" | "MAE"
+  loss: "SmoothL1"                 # "SmoothL1" | "MSE" | "MAE"

@@ -30,6 +30,10 @@ DATASET_REGISTRY: dict[str, tuple[str, str]] = {
         "srai.datasets",
         "ChicagoCrimeDataset",
     ),
+    "PhiladelphiaCrime": (
+        "srai.datasets",
+        "PhiladelphiaCrimeDataset",
+    ),
     # ← Add more datasets here
 }
 

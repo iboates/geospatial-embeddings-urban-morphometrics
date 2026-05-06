@@ -20,6 +20,25 @@ from srai.regionalizers import H3Regionalizer
 logger = logging.getLogger(__name__)
 
 
+# ── Use proper CRS ────────────────────────────────────────────────────────────
+
+CRS_MAPPING = {
+    # Equal Area, Equidistant, Conformal
+    "HouseSalesInKingCounty": ("EPSG:5070", "ESRI:102005", "EPSG:2926"),
+    "ChicagoCrime": ("EPSG:5070", "ESRI:102005", "EPSG:32616"),
+    "PhiladelphiaCrime": ("EPSG:5070", "ESRI:102005", "EPSG:32618"),
+    # ← Add more datasets here
+}
+
+
+def get_dataset_crs(dataset_name):
+    crs = CRS_MAPPING[dataset_name]
+    logger.info(
+        f"Using following CRS: Equal Area: {crs[0]} | Equidistant: {crs[1]} | Conformal {crs[2]}"
+    )
+    return crs
+
+
 # ── H3 assignment ─────────────────────────────────────────────────────────────
 
 

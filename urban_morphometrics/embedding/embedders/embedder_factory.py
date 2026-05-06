@@ -10,8 +10,6 @@ import importlib
 import logging
 from typing import Any
 
-from srai.neighbourhoods import H3Neighbourhood
-
 logger = logging.getLogger(__name__)
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -28,6 +26,10 @@ EMBEDDER_REGISTRY: dict[str, tuple[str, str]] = {
         "urban_morphometrics.embedding.embedders.hex2vec_urban_morphometrics_embedder",
         "UrbanMorphometricsHex2VecEmbedder",
     ),
+    "ContextualUrbanMorphometricsEmbedder": (
+        "urban_morphometrics.embedding.embedders.contextual_urban_morphometrics_embedder",
+        "ContextualUrbanMorphometricsEmbedder",
+    ),
     # ← Add more embedders here
 }
 
@@ -36,6 +38,7 @@ NO_FIT_EMBEDDERS = {
     "CountEmbedder",
     "ContextualCountEmbedder",
     "UrbanMorphometricsEmbedder",
+    "ContextualUrbanMorphometricsEmbedder",
 }
 
 
@@ -85,7 +88,6 @@ def build_embedder(
         embedder = cls(expected_output_features=osm_filter)
 
     elif name == "ContextualCountEmbedder":
-        neighbourhood = H3Neighbourhood()
         if neighbourhood is None:
             raise ValueError("ContextualCountEmbedder requires a neighbourhood object.")
         embedder = cls(
@@ -103,7 +105,21 @@ def build_embedder(
             expected_output_features=osm_filter,
             expected_morphology_features=morpho_filter,
         )
-
+    elif name in ("ContextualUrbanMorphometricsEmbedder"):
+        if morpho_filter is None:
+            raise ValueError(f"{name} requires a `morpho_filter` object")
+        if neighbourhood is None:
+            raise ValueError(
+                "ContextualUrbanMorphometricsEmbedder requires a neighbourhood object."
+            )
+        embedder = cls(
+            neighbourhood=neighbourhood,
+            neighbourhood_distance=neighbourhood_radius,
+            expected_output_features=osm_filter,
+            expected_morphology_features=morpho_filter,
+            concatenate_vectors=True,
+            count_subcategories=True,
+        )
     else:
         # Generic fallback — try passing hidden_sizes if accepted
         try:

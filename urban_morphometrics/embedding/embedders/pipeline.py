@@ -23,6 +23,7 @@ from srai.loaders.osm_loaders import OSMPbfLoader
 from srai.loaders.osm_loaders.filters import HEX2VEC_FILTER
 from srai.neighbourhoods.h3_neighbourhood import H3Neighbourhood
 
+from urban_morphometrics.embedding.data.preparation import get_dataset_crs
 from urban_morphometrics.embedding.embedders.embedder_factory import requires_fit
 from urban_morphometrics.embedding.filters import ALL_FILTER, EMPTY_FILTER
 from urban_morphometrics.main import compute_urban_morphometrics
@@ -124,16 +125,20 @@ def run_embedding_pipeline(
     if morpho_cfg:
         # Compute Urban Morphometrics
         logger.info("Loading Urban Morphometrics features for all regions...")
+        cache_name = "_".join(exp_name.split("_")[-2:])
+        dataset_name = exp_name.split("_")[-2]
+        logger.debug(f"Cache Folder: {cache_name} | Dataset Name: {dataset_name}")
+        equal_area_crs, equidistant_crs, conformal_crs = get_dataset_crs(dataset_name)
         morpho_all = compute_urban_morphometrics(
             study_area_gdf=combined,
             pbf_path=None,
-            run_name=morpho_cfg["cache_name"],
+            run_name=cache_name,
             output_folder="urban_morphometrics",
             neighbourhood_distance=morpho_cfg["neighbourhood_distance"],
             num_quantiles=morpho_cfg["num_quantiles"],
-            equal_area_crs=morpho_cfg["equal_area_crs"],
-            equidistant_crs=morpho_cfg["equidistant_crs"],
-            conformal_crs=morpho_cfg["conformal_crs"],
+            equal_area_crs=equal_area_crs,
+            equidistant_crs=equidistant_crs,
+            conformal_crs=conformal_crs,
             n_workers=20,
             use_cache=True,
         )
