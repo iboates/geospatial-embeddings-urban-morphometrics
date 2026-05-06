@@ -10,6 +10,8 @@ import importlib
 import logging
 from typing import Any
 
+from srai.neighbourhoods import H3Neighbourhood
+
 logger = logging.getLogger(__name__)
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -30,7 +32,11 @@ EMBEDDER_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 # Embedders that do NOT need a fit() call with OSM features
-NO_FIT_EMBEDDERS = {"CountEmbedder", "UrbanMorphometricsEmbedder"}
+NO_FIT_EMBEDDERS = {
+    "CountEmbedder",
+    "ContextualCountEmbedder",
+    "UrbanMorphometricsEmbedder",
+}
 
 
 def build_embedder(
@@ -79,6 +85,7 @@ def build_embedder(
         embedder = cls(expected_output_features=osm_filter)
 
     elif name == "ContextualCountEmbedder":
+        neighbourhood = H3Neighbourhood()
         if neighbourhood is None:
             raise ValueError("ContextualCountEmbedder requires a neighbourhood object.")
         embedder = cls(
