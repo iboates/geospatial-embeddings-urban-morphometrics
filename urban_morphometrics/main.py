@@ -214,31 +214,38 @@ def compute_urban_morphometrics(
     n_total = len(study_area_gdf)
     n_failed = 0
 
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        futures = {
-            executor.submit(_process_cell, region_id, row): region_id
-            for region_id, row in study_area_gdf.iterrows()
-        }
-        for future in tqdm(
-            as_completed(futures), total=n_total, desc="Cells", unit="cell"
-        ):
-            region_id = futures[future]
-            try:
-                rid, geom, metric_row = future.result()
-                rows.append({"region_id": rid, "geometry": geom, **metric_row})
-            except Exception:
-                log.warning("Cell %s failed — skipping", region_id, exc_info=True)
-                n_failed += 1
-
-    if n_failed:
-        log.warning(
-            "%d / %d cells failed and were excluded from results", n_failed, n_total
-        )
-
-    results_gdf = gpd.GeoDataFrame(rows, crs=study_area_gdf.crs).set_index("region_id")
     out_path = results_dir / "metrics.gpkg"
-    results_gdf.to_file(out_path, driver="GPKG")
-    log.info("Results written to %s", out_path)
+    if use_cache and out_path.exists():
+        results_gdf = gpd.read_file(out_path)
+        results_gdf = results_gdf.set_index("region_id")
+        log.info("Results loaded from %s", out_path)
+    else:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(_process_cell, region_id, row): region_id
+                for region_id, row in study_area_gdf.iterrows()
+            }
+            for future in tqdm(
+                as_completed(futures), total=n_total, desc="Cells", unit="cell"
+            ):
+                region_id = futures[future]
+                try:
+                    rid, geom, metric_row = future.result()
+                    rows.append({"region_id": rid, "geometry": geom, **metric_row})
+                except Exception:
+                    log.warning("Cell %s failed — skipping", region_id, exc_info=True)
+                    n_failed += 1
+
+        if n_failed:
+            log.warning(
+                "%d / %d cells failed and were excluded from results", n_failed, n_total
+            )
+
+        results_gdf = gpd.GeoDataFrame(rows, crs=study_area_gdf.crs).set_index(
+            "region_id"
+        )
+        results_gdf.to_file(out_path, driver="GPKG")
+        log.info("Results written to %s", out_path)
     return results_gdf
 
 
