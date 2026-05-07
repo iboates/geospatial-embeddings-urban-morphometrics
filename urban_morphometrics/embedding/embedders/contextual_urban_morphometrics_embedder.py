@@ -111,12 +111,18 @@ class ContextualUrbanMorphometricsEmbedder(ContextualCountEmbedder):
             ]
         ]
 
-        # 3. Concatenate the dataframes
+        # 3. Add neighbourhood morpho
+        if self.concatenate_vectors:
+            morpho_df = self._get_concatenated_embeddings(morpho_df)
+        else:
+            morpho_df = self._get_squashed_embeddings(morpho_df)
+
+        # 4. Concatenate the dataframes
         # Since both dataframes use the region ID as the index (e.g., REGIONS_INDEX),
         # a left join perfectly aligns the new features to the existing count embeddings.
         combined_embeddings_df = count_embeddings_df.join(morpho_df, how="left")
 
-        # 4. Fill missing values
+        # 5. Fill missing values
         # If any regions lacked morphological data, fill those NaN values with 0
         # to ensure the final embedding tensor remains valid for ML downstream tasks.
         combined_embeddings_df = combined_embeddings_df.fillna(0)

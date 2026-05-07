@@ -12,7 +12,7 @@ ALL_FILTER = {
     "floor_area": ["floor_area"],
     "longest_axis_length": ["longest_axis_length"],
     "perimeter_wall": ["perimeter_wall_individual", "perimeter_wall_joined"],
-    "volume": ["volume"],
+    # "volume": ["volume"],
     # Shape Metrics - building footprint geometry
     "centroid_corner_distance": [
         "ccd_mean",
