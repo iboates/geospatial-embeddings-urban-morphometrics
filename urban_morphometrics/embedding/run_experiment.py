@@ -33,6 +33,7 @@ from urban_morphometrics.embedding.data.preparation import (
     assign_h3_index,
     build_hf_dataset,
     fit_transform_scaler,
+    get_dataset_aggregation,
     merge_embeddings_with_targets,
     transform_scaler,
 )
@@ -106,7 +107,7 @@ def run(
         joined_test = transform_scaler(joined_test, numerical_cols, scaler)
 
     # ── Per-hex target (+ numerical) aggregation (average for price and count for crime activity) ────────────────────────────────
-    aggregation = ds_cfg["aggregation"]
+    aggregation = get_dataset_aggregation(ds_cfg["name"])
     aggregated_train = aggregate_per_hex(
         joined_train, dataset.target, numerical_cols, use_numerical, aggregation
     )
@@ -207,7 +208,7 @@ def run(
 
     # ── Train ────────────────────────────────────────────────────────────────
     regression_logger = WandbLogger(
-        name=exp_name, project="Urban Morphometrics - Regressor"
+        name=exp_name, project="Urban Morphometrics - Benchmark"
     )
 
     callbacks = [

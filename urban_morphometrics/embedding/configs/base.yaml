@@ -17,7 +17,6 @@ neighbourhood_radius: 2
 dataset:
   name: "HouseSalesInKingCounty"   # registry key → see src/data/dataset_factory.py
   use_numerical_columns: false     # if true, numerical cols are scaled and concatenated
-  aggregation: "average"          # "average" | "count" — how to aggregate target + numerical cols per hex
   dev_size: 0.1                    # fraction of train used as dev split
 
 # ── Embedder ─────────────────────────────────────────────────────────────────
