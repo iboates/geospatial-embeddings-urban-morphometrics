@@ -277,7 +277,7 @@ def main() -> None:
         help="Optional dataset name to overwrite the config",
     )
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, args.res, args.ds)
 
 
 if __name__ == "__main__":
