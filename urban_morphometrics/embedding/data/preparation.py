@@ -52,6 +52,19 @@ def get_dataset_aggregation(dataset_name):
     return agg
 
 
+LOSS_MAPPING = {
+    "HouseSalesInKingCounty": "SmoothL1",
+    "ChicagoCrime": "MAE",
+    "PhiladelphiaCrime": "MAE",
+}
+
+
+def get_loss_function(dataset_name):
+    loss_function = LOSS_MAPPING[dataset_name]
+    logger.info(f"Using following loss function: {loss_function}")
+    return loss_function
+
+
 # ── H3 assignment ─────────────────────────────────────────────────────────────
 
 

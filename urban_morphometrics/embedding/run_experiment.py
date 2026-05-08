@@ -34,6 +34,7 @@ from urban_morphometrics.embedding.data.preparation import (
     build_hf_dataset,
     fit_transform_scaler,
     get_dataset_aggregation,
+    get_loss_function,
     merge_embeddings_with_targets,
     transform_scaler,
 )
@@ -197,12 +198,13 @@ def run(
 
     # ── Model ────────────────────────────────────────────────────────────────
     embedding_size: int = hf_train["X"].shape[1]
+    loss = get_loss_function(ds_cfg["name"])
     model_cfg = cfg["model"]
     model = RegressionBaseModel(
         embeddings_size=embedding_size,
         linear_sizes=model_cfg["linear_sizes"],
         dropout_p=model_cfg.get("dropout_p", 0.2),
-        loss_name=train_cfg["loss"],
+        loss_name=loss,
     )
     evaluator = HexRegressionEvaluator()
 
@@ -268,6 +270,7 @@ def main() -> None:
         "--res",
         required=False,
         default=None,
+        type=int,
         help="Optional resolution (8, 9 or 10) used to overwrite the config",
     )
     parser.add_argument(
