@@ -65,14 +65,14 @@ def run(
 
     # ── Build experiment name ────────────────────────────────────────────────
     ds_cfg = cfg["dataset"]
-    if resolution is None:
-        resolution: int = cfg["resolution"]
+    if resolution is not None:
+        cfg["resolution"] = resolution
     if dataset_name is not None:
         ds_cfg["name"] = dataset_name
 
     cfg_sweep_name = cfg.get("sweep_name", "")
     cfg_exp_name = cfg.get("experiment_name", "")
-    exp_name = f"{cfg_sweep_name}_{cfg_exp_name}_{ds_cfg['name']}_r{resolution}"
+    exp_name = f"{cfg_sweep_name}_{cfg_exp_name}_{ds_cfg['name']}_r{cfg['resolution']}"
 
     logger.info("=== Experiment: %s ===", exp_name)
 
@@ -80,14 +80,14 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Dataset ──────────────────────────────────────────────────────────────
-    dataset = load_dataset(ds_cfg["name"], str(resolution))
+    dataset = load_dataset(ds_cfg["name"], str(cfg["resolution"]))
     train_gdf, dev_gdf = dataset.train_test_split(
         test_size=ds_cfg["dev_size"], validation_split=True
     )
-    _, test_gdf = dataset.load(version=str(resolution)).values()
+    _, test_gdf = dataset.load(version=str(cfg["resolution"])).values()
 
     # ── Regionalisation ──────────────────────────────────────────────────────
-    regionalizer = H3Regionalizer(resolution=resolution)
+    regionalizer = H3Regionalizer(resolution=cfg["resolution"])
 
     joined_train, regions_train = assign_h3_index(train_gdf, regionalizer)
     joined_dev, regions_dev = assign_h3_index(dev_gdf, regionalizer)
@@ -151,6 +151,7 @@ def run(
     embedding_logger = WandbLogger(
         name=exp_name, project="Urban Morphometrics - Embedding"
     )
+    embedding_logger.experiment.config.update(cfg)
 
     fit_kwargs = emb_cfg.get("fit_kwargs", {})
 
@@ -212,6 +213,7 @@ def run(
     regression_logger = WandbLogger(
         name=exp_name, project="Urban Morphometrics - Benchmark"
     )
+    regression_logger.experiment.config.update(cfg)
 
     callbacks = [
         EarlyStopping(monitor="val_loss", patience=5),
