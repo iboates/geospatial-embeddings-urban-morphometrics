@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # Predefined random seeds for reproducible experiments
 RANDOM_SEEDS = [42, 54, 456, 789, 1011, 1213, 1415, 1617, 1819, 2021]
 
+DATASETS = ["HouseSalesInKingCounty", "ChicagoCrime", "PhiladelphiaCrime"]
+
+RESOLUTIONS = [8, 9]
+
 
 def run_all() -> None:
     """Discover and run all experiments from config files with multiple seeds."""
@@ -45,7 +49,9 @@ def run_all() -> None:
         logger.warning("No config files found in %s (excluding base.yaml)", configs_dir)
         return
 
-    total_runs = len(config_files) * len(RANDOM_SEEDS)
+    total_runs = (
+        len(config_files) * len(RANDOM_SEEDS) * len(DATASETS) * len(RESOLUTIONS)
+    )
     logger.info(
         "Found %d config file(s) - will run each with %d seeds = %d total runs",
         len(config_files),
@@ -56,48 +62,53 @@ def run_all() -> None:
     results = {}
     run_count = 0
 
-    for config_path in config_files:
-        results[config_path.name] = {}
+    for resolution in RESOLUTIONS:
+        for dataset_name in DATASETS:
+            for config_path in config_files:
+                results[config_path.name] = {}
+                for seed in RANDOM_SEEDS:
+                    run_count += 1
+                    logger.info("─" * 80)
+                    logger.info(
+                        "[%d/%d] Running: %s (seed=%d)",
+                        run_count,
+                        total_runs,
+                        config_path.name,
+                        seed,
+                    )
+                    logger.info("─" * 80)
 
-        for seed in RANDOM_SEEDS:
-            run_count += 1
-            logger.info("─" * 80)
-            logger.info(
-                "[%d/%d] Running: %s (seed=%d)",
-                run_count,
-                total_runs,
-                config_path.name,
-                seed,
-            )
-            logger.info("─" * 80)
+                    try:
+                        # Set random seed as environment variable
+                        os.environ["RANDOM_SEED"] = str(seed)
+                        pl.seed_everything(seed, workers=True)
 
-            try:
-                # Set random seed as environment variable
-                os.environ["RANDOM_SEED"] = str(seed)
-                pl.seed_everything(seed, workers=True)
-
-                result = run(str(config_path))
-                results[config_path.name][seed] = {
-                    "status": "success",
-                    "result": result,
-                }
-                logger.info(
-                    "✓ Completed: %s (seed=%d)",
-                    config_path.name,
-                    seed,
-                )
-            except Exception as e:
-                logger.error(
-                    "✗ Failed: %s (seed=%d) - %s",
-                    config_path.name,
-                    seed,
-                    e,
-                    exc_info=True,
-                )
-                results[config_path.name][seed] = {
-                    "status": "failed",
-                    "error": str(e),
-                }
+                        result = run(
+                            str(config_path),
+                            resolution=resolution,
+                            dataset_name=dataset_name,
+                        )
+                        results[config_path.name][seed] = {
+                            "status": "success",
+                            "result": result,
+                        }
+                        logger.info(
+                            "✓ Completed: %s (seed=%d)",
+                            config_path.name,
+                            seed,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "✗ Failed: %s (seed=%d) - %s",
+                            config_path.name,
+                            seed,
+                            e,
+                            exc_info=True,
+                        )
+                        results[config_path.name][seed] = {
+                            "status": "failed",
+                            "error": str(e),
+                        }
 
     # Summary
     logger.info("─" * 80)
