@@ -1,0 +1,24 @@
+# Experiment: ContextualCountEmbedder (no training needed) on House Sales in King County
+# ContextualCountEmbedder and ContextualCountEmbedder do not require .fit() with OSM data
+# — they count OSM features per region directly.
+
+experiment_name: "contextual_raw_urban_morpho"
+
+osm_filter: "EMPTY"
+
+embedder:
+  name: "ContextualUrbanMorphometricsEmbedder"
+  # ContextualCountEmbedder has no hidden_sizes — leave empty
+  hidden_sizes: []
+  fit_kwargs: {}            # ContextualCountEmbedder.fit() is a no-op; kept for interface uniformity
+
+
+training:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 5
+
+morphometrics:
+  neighbourhood_distance: 300
+  num_quantiles: 4

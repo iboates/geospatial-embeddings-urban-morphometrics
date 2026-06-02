@@ -26,6 +26,9 @@ def _keep_polygons(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     gdf = gdf[gdf.geometry.geom_type.isin(_POLYGON_TYPES)].copy()
     gdf = gdf.explode(index_parts=False)
     gdf = gdf[gdf.geometry.geom_type == "Polygon"]
+    if gdf.index.duplicated().any():
+        keep = gdf.geometry.area.groupby(level=0).idxmax()
+        gdf = gdf.loc[keep]
     log.debug("  geometry filter: %d -> %d polygons", before, len(gdf))
     return gdf
 
@@ -35,6 +38,9 @@ def _keep_lines(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     gdf = gdf[gdf.geometry.geom_type.isin(_LINE_TYPES)].copy()
     gdf = gdf.explode(index_parts=False)
     gdf = gdf[gdf.geometry.geom_type == "LineString"]
+    if gdf.index.duplicated().any():
+        keep = gdf.geometry.length.groupby(level=0).idxmax()
+        gdf = gdf.loc[keep]
     log.debug("  geometry filter: %d -> %d linestrings", before, len(gdf))
     return gdf
 

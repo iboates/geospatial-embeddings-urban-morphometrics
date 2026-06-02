@@ -22,17 +22,31 @@ EMBEDDER_REGISTRY: dict[str, tuple[str, str]] = {
         "urban_morphometrics.embedding.embedders.urban_morphometrics_embedder",
         "UrbanMorphometricsEmbedder",
     ),
+    "Hex2VecUrbanMorphometrics": (
+        "urban_morphometrics.embedding.embedders.hex2vec_urban_morphometrics_embedder",
+        "UrbanMorphometricsHex2VecEmbedder",
+    ),
+    "ContextualUrbanMorphometricsEmbedder": (
+        "urban_morphometrics.embedding.embedders.contextual_urban_morphometrics_embedder",
+        "ContextualUrbanMorphometricsEmbedder",
+    ),
     # ← Add more embedders here
 }
 
 # Embedders that do NOT need a fit() call with OSM features
-NO_FIT_EMBEDDERS = {"CountEmbedder"}
+NO_FIT_EMBEDDERS = {
+    "CountEmbedder",
+    "ContextualCountEmbedder",
+    "UrbanMorphometricsEmbedder",
+    "ContextualUrbanMorphometricsEmbedder",
+}
 
 
 def build_embedder(
     name: str,
     hidden_sizes: list[int],
     osm_filter: Any,
+    morpho_filter: Any | None = None,
     neighbourhood: Any | None = None,
     neighbourhood_radius: int = 2,
 ) -> Any:
@@ -44,6 +58,7 @@ def build_embedder(
         hidden_sizes: Architecture sizes (ignored for embedders that don't use them).
         osm_filter: OSM feature filter (passed as `target_features` or
                     `expected_output_features` depending on embedder).
+        morpho_filter: Urban Morphology Metrics filter
         neighbourhood: H3Neighbourhood (required for ContextualCountEmbedder).
         neighbourhood_radius: Radius for neighbourhood-based embedders.
 
@@ -61,7 +76,7 @@ def build_embedder(
 
     # ── Per-embedder construction ─────────────────────────────────────────────
     if name == "Hex2Vec":
-        embedder = cls(hidden_sizes)
+        embedder = cls(hidden_sizes, expected_output_features=osm_filter)
 
     elif name == "GeoVex":
         embedder = cls(
@@ -83,6 +98,28 @@ def build_embedder(
             count_subcategories=True,
         )
 
+    elif name in ("UrbanMorphometricsEmbedder", "Hex2VecUrbanMorphometrics"):
+        if morpho_filter is None:
+            raise ValueError(f"{name} requires a `morpho_filter` object")
+        embedder = cls(
+            expected_output_features=osm_filter,
+            expected_morphology_features=morpho_filter,
+        )
+    elif name in ("ContextualUrbanMorphometricsEmbedder"):
+        if morpho_filter is None:
+            raise ValueError(f"{name} requires a `morpho_filter` object")
+        if neighbourhood is None:
+            raise ValueError(
+                "ContextualUrbanMorphometricsEmbedder requires a neighbourhood object."
+            )
+        embedder = cls(
+            neighbourhood=neighbourhood,
+            neighbourhood_distance=neighbourhood_radius,
+            expected_output_features=osm_filter,
+            expected_morphology_features=morpho_filter,
+            concatenate_vectors=True,
+            count_subcategories=True,
+        )
     else:
         # Generic fallback — try passing hidden_sizes if accepted
         try:

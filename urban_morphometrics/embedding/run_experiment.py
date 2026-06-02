@@ -18,6 +18,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from sklearn.preprocessing import MinMaxScaler
 from srai.benchmark import HexRegressionEvaluator
+from srai.neighbourhoods import H3Neighbourhood
 from srai.regionalizers import H3Regionalizer
 from torch.utils.data import DataLoader
 
@@ -32,11 +33,17 @@ from urban_morphometrics.embedding.data.preparation import (
     assign_h3_index,
     build_hf_dataset,
     fit_transform_scaler,
+    get_dataset_aggregation,
+    get_loss_function,
     merge_embeddings_with_targets,
     transform_scaler,
 )
-from urban_morphometrics.embedding.embedders.embedder_factory import build_embedder
+from urban_morphometrics.embedding.embedders.embedder_factory import (
+    build_embedder,
+    requires_fit,
+)
 from urban_morphometrics.embedding.embedders.pipeline import (
+    get_morpho_filter,
     get_osm_filter,
     run_embedding_pipeline,
 )
@@ -53,26 +60,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run(config_path: str) -> dict:
+def run(
+    config_path: str, resolution: int | None = None, dataset_name: str | None = None
+) -> dict:
     # ── Load config ──────────────────────────────────────────────────────────
     cfg = load_config(config_path)
-    exp_name: str = cfg["experiment_name"]
+
+    # ── Build experiment name ────────────────────────────────────────────────
+    ds_cfg = cfg["dataset"]
+    if resolution is not None:
+        cfg["resolution"] = resolution
+    if dataset_name is not None:
+        ds_cfg["name"] = dataset_name
+
+    cfg_sweep_name = cfg.get("sweep_name", "")
+    cfg_exp_name = cfg.get("experiment_name", "")
+    exp_name = f"{cfg_sweep_name}_{cfg_exp_name}_{ds_cfg['name']}_r{cfg['resolution']}"
+
     logger.info("=== Experiment: %s ===", exp_name)
 
     output_dir = Path(cfg["output_dir"]) / exp_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Dataset ──────────────────────────────────────────────────────────────
-    ds_cfg = cfg["dataset"]
-    dataset = load_dataset(ds_cfg["name"], ds_cfg["version"])
+    dataset = load_dataset(ds_cfg["name"], str(cfg["resolution"]))
     train_gdf, dev_gdf = dataset.train_test_split(
         test_size=ds_cfg["dev_size"], validation_split=True
     )
-    _, test_gdf = dataset.load(version=ds_cfg["version"]).values()
+    _, test_gdf = dataset.load(version=str(cfg["resolution"])).values()
 
     # ── Regionalisation ──────────────────────────────────────────────────────
-    resolution: int = cfg["resolution"]
-    regionalizer = H3Regionalizer(resolution=resolution)
+    regionalizer = H3Regionalizer(resolution=cfg["resolution"])
 
     joined_train, regions_train = assign_h3_index(train_gdf, regionalizer)
     joined_dev, regions_dev = assign_h3_index(dev_gdf, regionalizer)
@@ -93,7 +111,7 @@ def run(config_path: str) -> dict:
         joined_test = transform_scaler(joined_test, numerical_cols, scaler)
 
     # ── Per-hex target (+ numerical) aggregation (average for price and count for crime activity) ────────────────────────────────
-    aggregation = ds_cfg["aggregation"]
+    aggregation = get_dataset_aggregation(ds_cfg["name"])
     aggregated_train = aggregate_per_hex(
         joined_train, dataset.target, numerical_cols, use_numerical, aggregation
     )
@@ -118,22 +136,37 @@ def run(config_path: str) -> dict:
     # ── Embedder ─────────────────────────────────────────────────────────────
     emb_cfg = cfg["embedder"]
     osm_filter = get_osm_filter(cfg["osm_filter"])
+    morpho_filter = get_morpho_filter(cfg["morpho_filter"])
+    embedder_name = emb_cfg["name"]
+    if "Contextual" in embedder_name:
+        neighbourhood = H3Neighbourhood(full_regions)
+    else:
+        neighbourhood = None
     embedder = build_embedder(
-        name=emb_cfg["name"],
+        name=embedder_name,
         hidden_sizes=emb_cfg.get("hidden_sizes", []),
         osm_filter=osm_filter,
+        morpho_filter=morpho_filter,
+        neighbourhood=neighbourhood,
         neighbourhood_radius=cfg["neighbourhood_radius"],
     )
 
-    embedding_logger = WandbLogger(project="Urban Morphometrics - Embedding")
-
     fit_kwargs = emb_cfg.get("fit_kwargs", {})
 
-    fit_kwargs.setdefault("trainer_kwargs", {}).update({"logger": embedding_logger})
+    if requires_fit(emb_cfg["name"]):
+        embedding_logger = WandbLogger(
+            name=exp_name, project="Urban Morphometrics - Embedding"
+        )
+        embedding_logger.experiment.config.update(cfg)
+
+        fit_kwargs.setdefault("trainer_kwargs", {}).update({"logger": embedding_logger})
+
+    morpho_cfg = cfg.get("morphometrics", {})
 
     emb_train, emb_dev, emb_test = run_embedding_pipeline(
         embedder=embedder,
         embedder_name=emb_cfg["name"],
+        exp_name=exp_name,
         regions_train=regions_train,
         regions_dev=regions_dev,
         regions_test=regions_test,
@@ -141,6 +174,7 @@ def run(config_path: str) -> dict:
         osm_filter=osm_filter,
         neighbourhood_radius=cfg["neighbourhood_radius"],
         fit_kwargs=fit_kwargs,
+        morpho_cfg=morpho_cfg,
     )
     wandb.finish()
 
@@ -169,23 +203,27 @@ def run(config_path: str) -> dict:
 
     # ── Model ────────────────────────────────────────────────────────────────
     embedding_size: int = hf_train["X"].shape[1]
+    loss = get_loss_function(ds_cfg["name"])
     model_cfg = cfg["model"]
     model = RegressionBaseModel(
         embeddings_size=embedding_size,
         linear_sizes=model_cfg["linear_sizes"],
         dropout_p=model_cfg.get("dropout_p", 0.2),
-        loss_name=train_cfg["loss"],
+        loss_name=loss,
     )
     evaluator = HexRegressionEvaluator()
 
     # ── Train ────────────────────────────────────────────────────────────────
-    regression_logger = WandbLogger(project="Urban Morphometrics - Regressor")
+    regression_logger = WandbLogger(
+        name=exp_name, project="Urban Morphometrics - Benchmark"
+    )
+    regression_logger.experiment.config.update(cfg)
 
     callbacks = [
         EarlyStopping(monitor="val_loss", patience=5),
         ModelCheckpoint(
             dirpath=str(output_dir),
-            filename=f"{exp_name}_best_model.pt",
+            filename=f"{exp_name}_best_model",
             monitor="val_loss",
         ),
     ]
@@ -234,8 +272,21 @@ def main() -> None:
         required=True,
         help="Path to experiment YAML config (e.g. configs/experiments/hex2vec_king_county.yaml)",
     )
+    parser.add_argument(
+        "--res",
+        required=False,
+        default=None,
+        type=int,
+        help="Optional resolution (8, 9 or 10) used to overwrite the config",
+    )
+    parser.add_argument(
+        "--ds",
+        required=False,
+        default=None,
+        help="Optional dataset name to overwrite the config",
+    )
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, args.res, args.ds)
 
 
 if __name__ == "__main__":

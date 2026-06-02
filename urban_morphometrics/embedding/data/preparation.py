@@ -20,6 +20,51 @@ from srai.regionalizers import H3Regionalizer
 logger = logging.getLogger(__name__)
 
 
+# ── Dataset Mapping ───────────────────────────────────────────────────────────
+
+CRS_MAPPING = {
+    # Equal Area, Equidistant, Conformal
+    "HouseSalesInKingCounty": ("EPSG:5070", "ESRI:102005", "EPSG:32610"),
+    "ChicagoCrime": ("EPSG:5070", "ESRI:102005", "EPSG:32616"),
+    "PhiladelphiaCrime": ("EPSG:5070", "ESRI:102005", "EPSG:32618"),
+    # ← Add more datasets here
+}
+
+
+def get_dataset_crs(dataset_name):
+    crs = CRS_MAPPING[dataset_name]
+    logger.info(
+        f"Using following CRS: Equal Area: {crs[0]} | Equidistant: {crs[1]} | Conformal {crs[2]}"
+    )
+    return crs
+
+
+AGGREGATION_MAPPING = {
+    "HouseSalesInKingCounty": "average",
+    "ChicagoCrime": "count",
+    "PhiladelphiaCrime": "count",
+}
+
+
+def get_dataset_aggregation(dataset_name):
+    agg = AGGREGATION_MAPPING[dataset_name]
+    logger.info(f"Using following aggregation: {agg}")
+    return agg
+
+
+LOSS_MAPPING = {
+    "HouseSalesInKingCounty": "SmoothL1",
+    "ChicagoCrime": "MAE",
+    "PhiladelphiaCrime": "MAE",
+}
+
+
+def get_loss_function(dataset_name):
+    loss_function = LOSS_MAPPING[dataset_name]
+    logger.info(f"Using following loss function: {loss_function}")
+    return loss_function
+
+
 # ── H3 assignment ─────────────────────────────────────────────────────────────
 
 
