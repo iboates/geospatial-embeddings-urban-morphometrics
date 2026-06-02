@@ -13,3 +13,4 @@ files/
 wandb/
 *.env
 results/*
+analysis_outputs/*

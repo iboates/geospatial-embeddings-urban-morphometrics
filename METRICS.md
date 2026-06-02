@@ -118,46 +118,10 @@ All connectivity metrics require neighbourhood context because the street networ
 
 ---
 
-## Land Cover Metrics
-
-Proportional coverage metrics measure what fraction of the focal cell's area is occupied by a given OSM polygon type. Each value is in [0, 1]. Polygons are clipped to the cell boundary before area is summed. Cells with no matching features return 0.0 (not NaN).
-
-No neighbourhood context is needed — coverage is strictly within the focal cell boundary.
-
-### Landuse Cover (metric: `landuse_cover`)
-
-| Column | OSM tag | What it measures |
-|--------|---------|-----------------|
-| `landuse_farmland_proportion` | `landuse=farmland` | Fraction of cell covered by arable farmland. |
-| `landuse_residential_proportion` | `landuse=residential` | Fraction of cell covered by residential land. |
-| `landuse_grass_proportion` | `landuse=grass` | Fraction of cell covered by mown grass (parks, verges). |
-| `landuse_forest_proportion` | `landuse=forest` | Fraction of cell covered by managed forest. |
-| `landuse_meadow_proportion` | `landuse=meadow` | Fraction of cell covered by meadow or unmanaged grassland. |
-| `landuse_orchard_proportion` | `landuse=orchard` | Fraction of cell covered by fruit or nut orchards. |
-| `landuse_farmyard_proportion` | `landuse=farmyard` | Fraction of cell covered by farmyard (buildings + yards of a farm). |
-| `landuse_industrial_proportion` | `landuse=industrial` | Fraction of cell covered by industrial land. |
-| `landuse_vineyard_proportion` | `landuse=vineyard` | Fraction of cell covered by vineyards. |
-| `landuse_cemetery_proportion` | `landuse=cemetery` | Fraction of cell covered by cemetery. |
-| `landuse_commercial_proportion` | `landuse=commercial` | Fraction of cell covered by commercial land. |
-
-### Water Cover (metric: `water_cover`)
-
-| Column | OSM tag | What it measures |
-|--------|---------|-----------------|
-| `water_proportion` | `natural=water` | Fraction of cell covered by water bodies (lakes, ponds, rivers mapped as areas, reservoirs). |
-
-### Pedestrian Area Cover (metric: `pedestrian_area_cover`)
-
-| Column | OSM tag | What it measures |
-|--------|---------|-----------------|
-| `pedestrian_area_proportion` | `highway=pedestrian` (polygon) | Fraction of cell covered by pedestrian areas: plazas, pedestrian zones, and car-free squares mapped as closed ways. |
-
----
-
 ## Summary: Which Metrics Need Neighbourhood Context?
 
-**Self-contained** (focal-cell data only — 33 metrics):
-`floor_area`, `longest_axis_length`, `perimeter_wall_individual`, `perimeter_wall_joined`, `volume`, `circular_compactness`, `square_compactness`, `convexity`, `rectangularity`, `shape_index`, `corners`, `squareness`, `equivalent_rectangular_index`, `elongation`, `facade_ratio`, `fractal_dimension`, `form_factor`, `compactness_weighted_axis`, `centroid_corner_distance`, `orientation`, `landuse_cover`, `water_cover`, `pedestrian_area_cover`
+**Self-contained** (focal-cell data only — 20 metrics):
+`floor_area`, `longest_axis_length`, `perimeter_wall_individual`, `perimeter_wall_joined`, `volume`, `circular_compactness`, `square_compactness`, `convexity`, `rectangularity`, `shape_index`, `corners`, `squareness`, `equivalent_rectangular_index`, `elongation`, `facade_ratio`, `fractal_dimension`, `form_factor`, `compactness_weighted_axis`, `centroid_corner_distance`, `orientation`
 
 **Require neighbourhood context** (data from beyond the cell boundary — 12 building/street metrics + 34 connectivity metrics):
 `courtyard_area`, `courtyard_index`, `courtyards`, `shared_walls`, `alignment`, `neighbor_distance`, `mean_interbuilding_distance`, `building_adjacency`, `neighbors`, `cell_alignment`, `street_alignment`, `street_profile`, `nearest_street_distance`, and all `*_vehicle` / `*_pedestrian` connectivity metrics

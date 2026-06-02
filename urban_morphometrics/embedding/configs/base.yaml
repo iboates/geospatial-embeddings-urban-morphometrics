@@ -15,13 +15,13 @@ neighbourhood_radius: 2
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
 dataset:
-  name: "HouseSalesInKingCounty"   # registry key → see src/data/dataset_factory.py
+  name: "HouseSalesInKingCounty"   # registry key → see data/dataset_factory.py
   use_numerical_columns: false     # if true, numerical cols are scaled and concatenated
   dev_size: 0.1                    # fraction of train used as dev split
 
 # ── Embedder ─────────────────────────────────────────────────────────────────
 embedder:
-  name: "Hex2Vec"                  # registry key → see src/embedders/embedder_factory.py
+  name: "Hex2Vec"                  # registry key → see embedders/embedder_factory.py
   hidden_sizes: [150, 75, 50]      # Hex2Vec / GeoVex architecture
   fit_kwargs:                      # passed directly to embedder.fit()
     batch_size: 32
