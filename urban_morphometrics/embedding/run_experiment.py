@@ -38,7 +38,10 @@ from urban_morphometrics.embedding.data.preparation import (
     merge_embeddings_with_targets,
     transform_scaler,
 )
-from urban_morphometrics.embedding.embedders.embedder_factory import build_embedder
+from urban_morphometrics.embedding.embedders.embedder_factory import (
+    build_embedder,
+    requires_fit,
+)
 from urban_morphometrics.embedding.embedders.pipeline import (
     get_morpho_filter,
     get_osm_filter,
@@ -148,14 +151,15 @@ def run(
         neighbourhood_radius=cfg["neighbourhood_radius"],
     )
 
-    embedding_logger = WandbLogger(
-        name=exp_name, project="Urban Morphometrics - Embedding"
-    )
-    embedding_logger.experiment.config.update(cfg)
-
     fit_kwargs = emb_cfg.get("fit_kwargs", {})
 
-    fit_kwargs.setdefault("trainer_kwargs", {}).update({"logger": embedding_logger})
+    if requires_fit(emb_cfg["name"]):
+        embedding_logger = WandbLogger(
+            name=exp_name, project="Urban Morphometrics - Embedding"
+        )
+        embedding_logger.experiment.config.update(cfg)
+
+        fit_kwargs.setdefault("trainer_kwargs", {}).update({"logger": embedding_logger})
 
     morpho_cfg = cfg.get("morphometrics", {})
 
