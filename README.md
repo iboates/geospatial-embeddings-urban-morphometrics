@@ -1,5 +1,7 @@
 # Augmentation of Geospatial Embedding Models with Urban Morphometrics
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20314975.svg)](https://doi.org/10.5281/zenodo.20314975)
+
 The core of this repository is an **embedding benchmark** (`urban_morphometrics/embedding/`) that asks whether urban morphometrics improve geospatial region embeddings. It evaluates a range of embedders (Hex2Vec, Count/Contextual-Count) on SRAI downstream regression datasets (e.g. house prices, crime), and compares them on a common regression head. See **[Embedding benchmark](#embedding-benchmark)** below, or the detailed [embedding README](urban_morphometrics/embedding/README.md).
 
 The morphometrics pipeline (`urban_morphometrics/`) is the supporting component: it computes per-cell urban form metrics from OpenStreetMap data — building dimensions, shape, spatial distribution, street relationships, and street network connectivity — which the morphometrics-based embedders consume as features.
