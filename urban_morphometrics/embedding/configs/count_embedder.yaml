@@ -1,0 +1,18 @@
+# Experiment: CountEmbedder (no training needed) on House Sales in King County
+# CountEmbedder and ContextualCountEmbedder do not require .fit() with OSM data
+# — they count OSM features per region directly.
+
+experiment_name: "count_embedder"
+
+embedder:
+  name: "CountEmbedder"
+  # CountEmbedder has no hidden_sizes — leave empty
+  hidden_sizes: []
+  fit_kwargs: {}            # CountEmbedder.fit() is a no-op; kept for interface uniformity
+
+
+training:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 5

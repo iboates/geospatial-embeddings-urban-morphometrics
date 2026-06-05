@@ -1,0 +1,22 @@
+# Experiment: Hex2Vec Morphometrics embedder on the House Sales in King County dataset
+# Inherits defaults from configs/base.yaml — only overrides are listed here.
+
+experiment_name: "hex2vec_poi_and_urban_morpho"
+
+embedder:
+  name: "Hex2VecUrbanMorphometrics"
+  hidden_sizes: [150, 75, 50]
+  fit_kwargs:
+    batch_size: 32
+    trainer_kwargs:
+      max_epochs: 10
+
+training:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 5
+
+morphometrics:
+  neighbourhood_distance: 300
+  num_quantiles: 4

@@ -42,7 +42,8 @@ def compute(ctx: CellContext, num_quantiles: int, features_dir: Path | None = No
     building_orient = momepy.orientation(all_b)
     street_orient = momepy.orientation(streets)
 
-    values = momepy.street_alignment(building_orient, street_orient, nearest)
+    valid = nearest.notna()
+    values = momepy.street_alignment(building_orient[valid], street_orient, nearest[valid])
     focal_values = values.reindex(b.index)
     if features_dir is not None:
         write_features(b[["geometry"]].assign(street_alignment=focal_values), features_dir / "street_alignment.gpkg")

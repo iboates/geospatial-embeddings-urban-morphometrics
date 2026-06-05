@@ -1,0 +1,41 @@
+# Base configuration — values here are defaults that experiment configs can override.
+
+sweep_name: "benchmark"
+output_dir: "results"
+
+# H3 resolution for regionalisation
+resolution: 9
+
+# OSM feature filter used for embedding (must match what the embedder expects)
+osm_filter: "HEX2VEC_FILTER"   # currently only HEX2VEC_FILTER is supported
+morpho_filter: "ALL_FILTER"
+
+# Ring-buffer size around each region (used by CCE / GeoVex)
+neighbourhood_radius: 2
+
+# ── Dataset ──────────────────────────────────────────────────────────────────
+dataset:
+  name: "HouseSalesInKingCounty"   # registry key → see data/dataset_factory.py
+  use_numerical_columns: false     # if true, numerical cols are scaled and concatenated
+  dev_size: 0.1                    # fraction of train used as dev split
+
+# ── Embedder ─────────────────────────────────────────────────────────────────
+embedder:
+  name: "Hex2Vec"                  # registry key → see embedders/embedder_factory.py
+  hidden_sizes: [150, 75, 50]      # Hex2Vec / GeoVex architecture
+  fit_kwargs:                      # passed directly to embedder.fit()
+    batch_size: 32
+    trainer_kwargs:
+      max_epochs: 10
+
+# ── Regression head ──────────────────────────────────────────────────────────
+model:
+  linear_sizes: [50, 100, 50]
+  dropout_p: 0.2
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 5

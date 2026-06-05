@@ -1,6 +1,10 @@
-# Urban Morphometrics
+# Augmentation of Geospatial Embedding Models with Urban Morphometrics
 
-Computes urban morphology metrics for a gridded study area from OpenStreetMap data. Each grid cell is characterised by ~47 aggregated metrics covering building dimensions, shape, spatial distribution, street relationships, and street network connectivity.
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20314975.svg)](https://doi.org/10.5281/zenodo.20314975)
+
+The core of this repository is an **embedding benchmark** (`urban_morphometrics/embedding/`) that asks whether urban morphometrics improve geospatial region embeddings. It evaluates a range of embedders (Hex2Vec, Count/Contextual-Count) on SRAI downstream regression datasets (e.g. house prices, crime), and compares them on a common regression head. See **[Embedding benchmark](#embedding-benchmark)** below, or the detailed [embedding README](urban_morphometrics/embedding/README.md).
+
+The morphometrics pipeline (`urban_morphometrics/`) is the supporting component: it computes per-cell urban form metrics from OpenStreetMap data — building dimensions, shape, spatial distribution, street relationships, and street network connectivity — which the morphometrics-based embedders consume as features.
 
 ## Installation
 
@@ -8,7 +12,11 @@ Computes urban morphology metrics for a gridded study area from OpenStreetMap da
 poetry install
 ```
 
-## Running
+`.env` (loaded via python-dotenv) supplies the `WANDB_API_KEY` used by the benchmark runners.
+
+To jump straight to the benchmark, see [Embedding benchmark](#embedding-benchmark). The sections immediately below document the **morphometrics pipeline** — the component that produces the metric features used by the morphometrics-based embedders.
+
+## Running the morphometrics pipeline
 
 ### Command line
 
@@ -178,6 +186,39 @@ Each metric produces aggregated columns for both `_vehicle` and `_pedestrian` ne
 | `gamma_global` | `gamma_global_{vehicle\|pedestrian}` | Global edge density |
 | `cds_length_total` | `cds_length_total_{vehicle\|pedestrian}` | Total cul-de-sac length (m) |
 | `proportion` | `proportion_{three\|four\|dead}_{vehicle\|pedestrian}` | Share of 3-way, 4-way, and dead-end nodes |
+
+## Embedding benchmark
+
+The `urban_morphometrics/embedding/` subpackage is the main entry point of the project. Each experiment loads an SRAI dataset, regionalises it to H3, builds an embedder, embeds the regions, trains a PyTorch-Lightning regression head on a downstream target, evaluates it with `HexRegressionEvaluator`, and logs results to Weights & Biases. Running the same regression head over different embedders lets you compare how much signal each embedding carries — and whether adding morphometrics helps.
+
+### Running
+
+```bash
+# Run a single experiment from a config (--res / --ds optionally override the config)
+python -m urban_morphometrics.embedding.run_experiment \
+    --config urban_morphometrics/embedding/configs/hex2vec.yaml --res 9 --ds HouseSalesInKingCounty
+
+# Run every config × seeds × datasets × resolutions
+python -m urban_morphometrics.embedding.run_all
+
+# Captum feature attribution for a trained model
+python -m urban_morphometrics.embedding.run_captum
+```
+
+`run_all.py` discovers every `configs/*.yaml` (except `base.yaml`) and runs each across the seeds, datasets, and resolutions defined at the top of that file.
+
+### Embedders and datasets
+
+Embedders and datasets are registered in factory modules, so adding one means appending a registry entry and (optionally) a small construction/region-building branch:
+
+- **Embedders** (`embedders/embedder_factory.py`): `Hex2Vec`, `GeoVex`, `CountEmbedder`, `ContextualCountEmbedder`, plus the morphometrics-based `UrbanMorphometricsEmbedder`, `Hex2VecUrbanMorphometrics`, and `ContextualUrbanMorphometricsEmbedder`.
+- **Datasets** (`data/dataset_factory.py`): `HouseSalesInKingCounty`, `ChicagoCrime`, `PhiladelphiaCrime`, `AirbnbMulticity`.
+
+### Configuration
+
+Experiments are YAML configs in `configs/`, each **merged on top of `configs/base.yaml`**, so a config only lists what differs from the defaults. Top-level keys cover `resolution`, the OSM/morphometrics feature filters, and the neighbourhood radius; the `dataset`, `embedder`, `model`, and `training` sections configure the run.
+
+For the full guide to adding datasets, embedders, and configs, see the **[embedding benchmark README](urban_morphometrics/embedding/README.md)**.
 
 ## Running tests
 

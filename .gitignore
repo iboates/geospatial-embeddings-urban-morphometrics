@@ -8,3 +8,9 @@
 files/
 *.gpkg
 *.parquet
+*.ckpt
+*.csv
+wandb/
+*.env
+results/*
+analysis_outputs/*

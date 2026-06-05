@@ -26,7 +26,6 @@ First, use QuackOSM's `convert_pbf_to_geodataframe` method to retrieve the follo
 
 * A buildings_gdf, filter `{"building": True, "building:levels": True, "height": True}`
 * A highways gdf, filter `{"highway": True, "oneway": True}`
-* A landuse gdf, filter `{"landuse": True}`
 
 QuackOSM should cache these resuls automatically. Use keep_all_tags=False.
 
@@ -104,9 +103,8 @@ def _default_oneway(highway_val, junction) -> bool:
     "service", "living_street", "road", "track",
     "footway", "pedestrian", "path", "steps", "corridor", "bridleway",
 
-5. Landuse projected to equal area CRS
-6. Buildings that are within neighbourhood_distance of the cell but do not intersect it
-7. Highways that are within neighbourhood_distance of the cell but do not intersect it
+5. Buildings that are within neighbourhood_distance of the cell but do not intersect it
+6. Highways that are within neighbourhood_distance of the cell but do not intersect it
 
 The CellContext should cache its content based on the run name and load it if it already exists
 
